@@ -4,7 +4,7 @@
 Minimal Pi extension package providing multi-provider web access (Firecrawl, Exa, Tavily, Brave) for Pi.
 
 ## Package
-- Published package name: `@xl0/pi-lovely-web`.
+- Published package name: `@xl0/pi-lovely-web`; package description: "Pi extension package for web_search, web_fetch, and web_image via Firecrawl, Exa, Tavily, and Brave."
 - Pi entry: `extensions/` via `package.json#pi.extensions`.
 - Published files include `extensions/`, `README.md`, and `LICENSE`; package gallery image metadata points at GitHub-hosted screenshots under `assets/`.
 - Zero runtime dependencies. Pi APIs are peer dependencies with minimum version `>=0.75.4`.

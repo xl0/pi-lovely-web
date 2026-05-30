@@ -100,3 +100,14 @@ Fetch params:
 | Exa           | ✓      | ✓     | `x-api-key` |
 | Tavily        | ✓      | ✓     | `Authorization: Bearer` |
 | Brave Search  | ✓      | -     | `X-Subscription-Token` |
+
+## Related projects
+
+|  |  |
+| --- | --- |
+| [Pi Lovely Dev Tools](https://github.com/xl0/pi-lovely-dev-tools) | interactive debugging helpers `/tool` `/show-sysprompt` |
+| [Pi Lovely IDE](https://github.com/xl0/pi-lovely-ide) | IDE integration |
+
+---
+
+Like this work? [Hire me](https://alexey.work/cv?ref=pi-lovely-web)
