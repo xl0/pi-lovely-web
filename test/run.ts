@@ -31,7 +31,11 @@ const configPath = join(projectRoot, ".pi", CONFIG_FILE_NAME)
 
 function writePerCaseConfig(provider: string) {
 	mkdirSync(join(projectRoot, ".pi"), { recursive: true })
-	writeFileSync(configPath, `${JSON.stringify({ webSearch: { provider }, webFetch: { provider } }, null, 2)}\n`, "utf-8")
+	writeFileSync(
+		configPath,
+		`${JSON.stringify({ webSearchProvider: provider, webFetchProvider: provider === "brave" ? "disabled" : provider }, null, 2)}\n`,
+		"utf-8"
+	)
 }
 
 const systemPrompt = [
