@@ -109,10 +109,10 @@ export async function imageImpl(
 
 	if (params.resize === false) {
 		// Re-encode to sanitize, but don't downscale.
-		const validated = (await resizeImage(
-			{ type: "image", data: image.data, mimeType: image.mimeType },
-			{ maxWidth: Infinity, maxHeight: Infinity }
-		)) as ResizedImage | null
+		const validated = (await resizeImage(Buffer.from(image.data, "base64"), image.mimeType, {
+			maxWidth: Infinity,
+			maxHeight: Infinity
+		})) as ResizedImage | null
 		if (!validated) {
 			const note = `Fetched image [${image.mimeType}]\n[Image omitted: could not be decoded]`
 			return emitResult(textOnlyResult(note, downloadDetails), onUpdate)
@@ -131,10 +131,10 @@ export async function imageImpl(
 		)
 	}
 
-	const resized = (await resizeImage(
-		{ type: "image", data: image.data, mimeType: image.mimeType },
-		{ maxWidth: params.maxSize ?? 2000, maxHeight: params.maxSize ?? 2000 }
-	)) as ResizedImage | null
+	const resized = (await resizeImage(Buffer.from(image.data, "base64"), image.mimeType, {
+		maxWidth: params.maxSize ?? 2000,
+		maxHeight: params.maxSize ?? 2000
+	})) as ResizedImage | null
 
 	if (!resized) {
 		const note = `Fetched image [${image.mimeType}]\n[Image omitted: could not be decoded or resized below the inline image size limit.]`
