@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { type ConfigFromSchema, defineScopedConfig, field } from "@xl0/pi-lovely-config"
@@ -129,8 +129,9 @@ export function loadConfig(cwd: string): WebToolsConfig {
 }
 
 export function loadScopedConfig(cwd: string): typeof lovelyWebConfigSpec {
-	migrateOldConfig(cwd)
-	return lovelyWebConfigSpec.load(cwd)
+	const config = lovelyWebConfigSpec.load(cwd)
+	migrateOldConfig(config)
+	return config
 }
 
 export function applyToolConfig(pi: ExtensionAPI, config: WebToolsConfig): void {
@@ -144,7 +145,6 @@ export function applyToolConfig(pi: ExtensionAPI, config: WebToolsConfig): void 
 	pi.setActiveTools([...active])
 }
 
-type ConfigPatch = Partial<Record<keyof WebToolsConfig, unknown>> & Record<string, unknown>
 type OldConfig = {
 	webSearch?: { provider?: string | null }
 	webFetch?: { provider?: string | null }
@@ -152,59 +152,43 @@ type OldConfig = {
 	webApiKeys?: Record<string, string>
 }
 
-function migrateOldConfig(cwd: string): void {
-	for (const scope of lovelyWebConfigSpec.scopes) {
-		const newPath = lovelyWebConfigSpec.path(scope, cwd)
+function migrateOldConfig(config: typeof lovelyWebConfigSpec): void {
+	for (const scope of config.scopes) {
+		const newPath = config.path(scope)
 		const oldPath = join(dirname(newPath), OLD_CONFIG_FILE_NAME)
 		if (!existsSync(oldPath)) continue
 
-		let migrated: ConfigPatch
 		try {
-			migrated = oldToNewConfig(readJsonObject(oldPath) as OldConfig)
+			const old = JSON.parse(readFileSync(oldPath, "utf-8")) as OldConfig
+			if (!old || typeof old !== "object" || Array.isArray(old)) throw new Error("old config must be an object")
+			const update = <Key extends keyof WebToolsConfig & string>(key: Key, value: WebToolsConfig[Key]) => {
+				if (config.scoped[scope][key] === undefined) config.update(scope, key, value)
+			}
+
+			const searchProvider = old.webSearch?.provider
+			if (searchProvider === null) update("webSearchProvider", DISABLED_VALUE)
+			else if (typeof searchProvider === "string" && (searchProviderSettingValues as readonly string[]).includes(searchProvider)) {
+				update("webSearchProvider", searchProvider as WebToolsConfig["webSearchProvider"])
+			}
+
+			const fetchProvider = old.webFetch?.provider
+			if (fetchProvider === null) update("webFetchProvider", DISABLED_VALUE)
+			else if (typeof fetchProvider === "string" && (fetchProviderSettingValues as readonly string[]).includes(fetchProvider)) {
+				update("webFetchProvider", fetchProvider as WebToolsConfig["webFetchProvider"])
+			}
+
+			if (typeof old.webImage?.enabled === "boolean") update("webImageEnabled", old.webImage.enabled)
+			if (typeof old.webImage?.resize === "boolean") update("webImageResize", old.webImage.resize)
+			if (typeof old.webImage?.maxSize === "number" && old.webImage.maxSize >= 1) update("webImageMaxSize", old.webImage.maxSize)
+
+			for (const [providerId, key] of Object.entries(old.webApiKeys ?? {})) {
+				const keyField = apiKeyFields[providerId as keyof typeof apiKeyFields]
+				if (keyField && typeof key === "string") update(keyField, key)
+			}
 		} catch {
+			// Best-effort legacy migration: malformed/stale old config should not block startup.
+		} finally {
 			rmSync(oldPath, { force: true })
-			continue
 		}
-		const existing = existsSync(newPath) ? readJsonObject(newPath) : {}
-		writeJsonObject(newPath, { ...migrated, ...existing })
-		rmSync(oldPath, { force: true })
 	}
-}
-
-function oldToNewConfig(old: OldConfig): ConfigPatch {
-	const config: ConfigPatch = {}
-	setProvider(config, "webSearchProvider", old.webSearch?.provider)
-	setProvider(config, "webFetchProvider", old.webFetch?.provider)
-	if (typeof old.webImage?.enabled === "boolean") config.webImageEnabled = old.webImage.enabled
-	if (typeof old.webImage?.resize === "boolean") config.webImageResize = old.webImage.resize
-	if (typeof old.webImage?.maxSize === "number") config.webImageMaxSize = old.webImage.maxSize
-	for (const [providerId, key] of Object.entries(old.webApiKeys ?? {})) {
-		const keyField = apiKeyFields[providerId as keyof typeof apiKeyFields]
-		if (keyField && typeof key === "string") config[keyField] = key
-	}
-	return config
-}
-
-function setProvider(config: ConfigPatch, key: "webSearchProvider" | "webFetchProvider", provider: string | null | undefined): void {
-	if (provider === undefined) return
-	if (provider === null) {
-		config[key] = DISABLED_VALUE
-		return
-	}
-	config[key] = provider
-}
-
-function readJsonObject(path: string): ConfigPatch {
-	try {
-		const value = JSON.parse(readFileSync(path, "utf-8"))
-		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("must be an object")
-		return value as ConfigPatch
-	} catch (error) {
-		throw new Error(`Invalid Lovely Web config at ${path}: ${error instanceof Error ? error.message : String(error)}`)
-	}
-}
-
-function writeJsonObject(path: string, config: ConfigPatch): void {
-	mkdirSync(dirname(path), { recursive: true })
-	writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8")
 }
