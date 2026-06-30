@@ -5,17 +5,18 @@
 - Keep `web_search`, `web_fetch`, and `web_image` tool names.
 - Providers use plain REST via shared `fetch()` helpers, not provider SDKs.
 - Search provider defaults to Firecrawl; fetch has no default and is disabled until configured.
-- Provider config lives in exported `CONFIG_FILE_NAME` (`xl0-pi-lovely-web.json`) under global `~/.pi/agent/` and project `.pi/`; project config overrides global.
-- API key resolution: `webApiKeys.<providerId>` → provider env var → explicit error.
+- Provider config uses `@xl0/pi-lovely-config` in exported `CONFIG_FILE_NAME` (`xl0-pi-lovely-web.json`) under user `~/.pi/agent/` and workspace `.pi/`; workspace config overrides user.
+- Old `xl0-web-tools.json` nested configs migrate to flat `xl0-pi-lovely-web.json` on load, then delete the old file.
+- API key resolution: flat `<provider>ApiKey` setting → provider env var → explicit error.
 - `/lovely-web` applies tool active-state changes immediately with `setActiveTools()`.
 - `web_image` is URL-only and uses Pi image resizing; it does not require provider config/API keys.
 
 ## Architecture
 - `extensions/lovely-web/index.ts` wires session config, tools, and command registration.
-- `config.ts` owns provider registry/config loading/saving, enabled-state checks, API-key/provider resolution.
+- `config.ts` owns provider registry, `@xl0/pi-lovely-config` schema/loading/migration, enabled-state checks, API-key/provider resolution.
 - `constants.ts` owns shared constants such as the default timeout.
 - `tools.ts` owns tool schemas, render hooks, and execution wrappers.
-- `command.ts` owns the interactive settings UI.
+- `command.ts` owns the `ScopedConfigEditor` settings command.
 - `image.ts` owns direct image download/resize handling.
 - `providers/` contains one provider adapter per external API plus shared HTTP/types.
 

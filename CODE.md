@@ -7,7 +7,7 @@ Minimal Pi extension package providing multi-provider web access (Firecrawl, Exa
 - Published package name: `@xl0/pi-lovely-web`; package description: "Pi extension package for web_search, web_fetch, and web_image via Firecrawl, Exa, Tavily, and Brave."
 - Pi entry: `extensions/` via `package.json#pi.extensions`.
 - Published files include `extensions/`, `README.md`, and `LICENSE`; package gallery image metadata points at GitHub-hosted screenshots under `assets/`.
-- Zero runtime dependencies. Pi APIs are peer dependencies with minimum version `>=0.75.4`.
+- Runtime dependency: `@xl0/pi-lovely-config`. Pi APIs are peer dependencies with minimum version `>=0.79.10`.
 
 ## Test infrastructure
 `test/cases.json` — 3 query-pattern cases (`search`, `search-fetch`, `fetch`), each tested against applicable providers. `search` runs on firecrawl+exa+tavily+brave; `search-fetch`/`fetch` run on firecrawl+exa+tavily (brave is search-only). Queries are stable topics to avoid content drift.
@@ -25,18 +25,18 @@ Minimal Pi extension package providing multi-provider web access (Firecrawl, Exa
 - `constants.ts`: shared extension constants, currently the default request timeout.
 - `types.ts`: shared `ToolResult` shape for tool content/details/error returns.
 - `image.ts`: exports standalone `imageImpl`; downloads direct image URLs without provider config/API keys. Supports PNG/JPEG/WebP/GIF, default 5 MB download cap, maximum 20 MB, optional timeout/maxBytes. Downloaded images are passed through Pi's `resizeImage()` before returning to the LLM; if decoding/resizing cannot fit inline limits, the image is omitted with a note. Metadata lives in `details`; Pi's generic image-content renderer displays the image block.
-- `command.ts`: `/lovely-web` SettingsList-based interactive command to configure providers, API keys, search/fetch disabled state (`provider:null`), and image enabled state. Active-tool changes are applied immediately through Pi `setActiveTools()`.
+- `command.ts`: `/lovely-web` opens `ScopedConfigEditor` from `@xl0/pi-lovely-config` to configure providers, API keys, search/fetch disabled state (`disabled`), and image settings across user/workspace scopes. Active-tool changes are applied immediately through Pi `setActiveTools()`.
 - `render.ts`: shared collapsed text result renderer for search/fetch.
 
 Tools:
 - `web_search`: search dispatching to configured search provider with provider-specific schema. Common args are `query`, optional `limit`, and optional `fetchResult`; provider-specific args mirror useful API concepts (`source` for Firecrawl/Brave, `category` for Exa, `topic`/`includeImages` for Tavily). Result rendering shows the first few output lines until expanded. `fetchResult` defaults to false; when true and `web_fetch` has a configured provider, the first result is fetched. Image searches first try direct image fetch/resizing and fall back to page markdown fetch only when the result URL is not image content and `web_fetch` is configured.
 - `web_fetch`: fetch one URL as cleaned markdown dispatching to configured fetch provider. Common public options are `url`, optional `timeout`, and optional `includeMetadata`; extra provider-specific options are Firecrawl `waitFor`, Exa `maxAgeHours`, and Tavily `extractDepth`. Tool call rendering shows supplied non-default args. Result rendering shows the first few output lines until expanded.
-- `web_image`: fetch a direct image URL and return a short text note plus one image content block, matching Pi `read` image behavior. Resizing is controlled by config (`webImage.resize`, default true) and max longest side (`webImage.maxSize`, default 2000 px).
+- `web_image`: fetch a direct image URL and return a short text note plus one image content block, matching Pi `read` image behavior. Resizing is controlled by config (`webImageResize`, default true) and max longest side (`webImageMaxSize`, default 2000 px).
 
 ## Provider dispatch
-`extensions/lovely-web/config.ts` owns provider registry/config helpers and exports `CONFIG_FILE_NAME` (`xl0-pi-lovely-web.json`). Search and fetch providers are configurable independently in that file (`~/.pi/agent/` global, `.pi/` project, project overrides). `webSearch.provider` defaults to `firecrawl`. `webFetch.provider` has no default; missing or `null` removes `web_fetch` from Pi's active tool list and gates execution. `webImage.enabled` defaults to true; setting it to false removes `web_image`. Malformed config JSON throws a path-specific error; session startup and `/lovely-web` show it as a user-facing error.
+`extensions/lovely-web/config.ts` owns provider registry/config helpers and exports `CONFIG_FILE_NAME` (`xl0-pi-lovely-web.json`). Config is defined via `@xl0/pi-lovely-config`, loaded from `~/.pi/agent/` user scope and `.pi/` workspace scope, with workspace overriding user. Search and fetch providers are flat settings: `webSearchProvider` defaults to `firecrawl`, `webFetchProvider` defaults to `disabled`; `disabled` removes the tool from Pi's active tool list and gates execution. `webImageEnabled` defaults to true; setting it to false removes `web_image`. `webImageResize` defaults true and `webImageMaxSize` defaults 2000. Invalid JSON throws a path-specific error; invalid known values become warnings and are ignored while resolving.
 
-API key resolution: `webApiKeys.<providerId>` in config → `process.env[PROVIDER_ENV_KEY]` → error.
+API key resolution: `<provider>ApiKey` in config (`firecrawlApiKey`, `exaApiKey`, `tavilyApiKey`, `braveApiKey`) → `process.env[PROVIDER_ENV_KEY]` → error. Old `xl0-web-tools.json` nested configs are migrated to the new flat `xl0-pi-lovely-web.json` file per scope, then deleted; existing new-file keys win if both files exist.
 
 `providers/http.ts` contains shared JSON request handling for fetch timeouts, abort propagation, non-2xx errors, and JSON parsing.
 
@@ -76,7 +76,7 @@ SearchResult { title, url, description?, markdown? }
 SearchOptions { limit, source?, timeout?, category?, location?, country?, tbs?, timeRange?, topic?, includeImages?, searchLang?, freshness? }
 FetchOptions { timeout?, waitFor?, maxAgeHours?, extractDepth? }
 Provider { id, label, envApiKey, searchParameters?, fetchParameters?, search(apiKey, query, SearchOptions), fetch?() }
-WebToolsConfig { webSearch?: {provider?: string | null}, webFetch?: {provider?: string | null}, webImage?: {enabled?, resize?, maxSize?}, webApiKeys? }
+WebToolsConfig { webSearchProvider, webFetchProvider, webImageEnabled, webImageResize, webImageMaxSize, firecrawlApiKey, exaApiKey, tavilyApiKey, braveApiKey }
 ```
 
 ## Shared HTTP (`providers/http.ts`)
