@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { providers, resolveApiKey } from "../extensions/lovely-web/config.js"
+import { lovelyWebConfigSpec, providers, resolveApiKey, type WebToolsConfig } from "../extensions/lovely-web/config.js"
 import { DEFAULT_TIMEOUT_MS } from "../extensions/lovely-web/constants.js"
 import { formatSearchOutput } from "../extensions/lovely-web/format.js"
-import type { SearchOptions, WebToolsConfig } from "../extensions/lovely-web/providers/types.js"
+import type { SearchOptions } from "../extensions/lovely-web/providers/types.js"
 import { loadTestEnv } from "./env.js"
 
 interface TestCase {
@@ -24,9 +24,9 @@ let failed = 0
 
 for (const c of cases) {
 	const config: WebToolsConfig = {
-		webSearch: { provider: "tavily" },
-		webFetch: { provider: "tavily" },
-		webApiKeys: {}
+		...lovelyWebConfigSpec.defaults,
+		webSearchProvider: "tavily",
+		webFetchProvider: "tavily"
 	}
 
 	console.log(`Updating reference: ${c.id} (${c.tool})`)
