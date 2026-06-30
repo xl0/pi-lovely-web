@@ -1,16 +1,22 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join, resolve } from "node:path"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { type ConfigFromSchema, defineScopedConfig, field } from "@xl0/pi-lovely-config"
 import { braveProvider } from "./providers/brave.js"
 import { exaProvider } from "./providers/exa.js"
 import { firecrawlProvider } from "./providers/firecrawl.js"
 import { tavilyProvider } from "./providers/tavily.js"
-import type { Provider, WebToolsConfig } from "./providers/types.js"
+import type { Provider } from "./providers/types.js"
 
 export const DEFAULT_PROVIDER_ID = "firecrawl"
 export const CONFIG_FILE_NAME = "xl0-pi-lovely-web.json"
-export const DISABLED_LABEL = "Disabled"
+export const OLD_CONFIG_FILE_NAME = "xl0-web-tools.json"
+export const DISABLED_VALUE = "disabled"
+
+const searchProviderValues = ["firecrawl", "exa", "tavily", "brave"] as const
+const fetchProviderValues = ["firecrawl", "exa", "tavily"] as const
+const searchProviderSettingValues = [DISABLED_VALUE, ...searchProviderValues] as const
+const fetchProviderSettingValues = [DISABLED_VALUE, ...fetchProviderValues] as const
 
 export const providers: Record<string, Provider> = {
 	firecrawl: firecrawlProvider,
@@ -19,34 +25,78 @@ export const providers: Record<string, Provider> = {
 	brave: braveProvider
 }
 
-export const providerNames = Object.keys(providers)
+const apiKeyFields = {
+	firecrawl: "firecrawlApiKey",
+	exa: "exaApiKey",
+	tavily: "tavilyApiKey",
+	brave: "braveApiKey"
+} as const
+
+const lovelyWebConfigSchema = {
+	webSearchProvider: field.enum(searchProviderSettingValues, DEFAULT_PROVIDER_ID, {
+		label: "web_search",
+		description: "Search provider, or disabled to remove web_search from active tools."
+	}),
+	webFetchProvider: field.enum(fetchProviderSettingValues, DISABLED_VALUE, {
+		label: "web_fetch",
+		description: "Fetch provider, or disabled to remove web_fetch from active tools."
+	}),
+	webImageEnabled: field.boolean(true, {
+		label: "web_image",
+		description: "Enable or disable direct image URL fetching."
+	}),
+	webImageResize: field.boolean(true, {
+		label: "Resize images",
+		description: "Resize fetched images to fit within the max size limit.",
+		depth: 1,
+		visibleWhen: ({ get }) => get("webImageEnabled") === true
+	}),
+	webImageMaxSize: field.number(2000, {
+		label: "Max image size",
+		description: "Maximum longest side in pixels for resized images.",
+		min: 1,
+		step: 100,
+		depth: 1,
+		visibleWhen: ({ get }) => get("webImageEnabled") === true && get("webImageResize") === true
+	}),
+	firecrawlApiKey: field.string("", { label: "Firecrawl API key" }),
+	exaApiKey: field.string("", { label: "Exa API key" }),
+	tavilyApiKey: field.string("", { label: "Tavily API key" }),
+	braveApiKey: field.string("", { label: "Brave API key" })
+} as const
+
+export type WebToolsConfig = ConfigFromSchema<typeof lovelyWebConfigSchema>
+
+export const lovelyWebConfigSpec = defineScopedConfig({
+	fileName: CONFIG_FILE_NAME,
+	schema: lovelyWebConfigSchema
+})
 
 export function isSearchEnabled(config: WebToolsConfig): boolean {
-	return config.webSearch?.provider !== null
+	return config.webSearchProvider !== DISABLED_VALUE
 }
 
 export function isFetchEnabled(config: WebToolsConfig): boolean {
-	return config.webFetch?.provider !== null && config.webFetch?.provider !== undefined
+	return config.webFetchProvider !== DISABLED_VALUE
 }
 
 export function isImageEnabled(config: WebToolsConfig): boolean {
-	return config.webImage?.enabled !== false
+	return config.webImageEnabled
 }
 
 export function isImageResizeEnabled(config: WebToolsConfig): boolean {
-	return config.webImage?.resize !== false
+	return config.webImageResize
 }
 
 export function getImageMaxSize(config: WebToolsConfig): number {
-	return config.webImage?.maxSize ?? 2000
+	return config.webImageMaxSize
 }
 
 function resolveProviderId(type: "search" | "fetch", config: WebToolsConfig): string {
 	if (type === "search" && !isSearchEnabled(config)) throw new Error("web_search is disabled. Enable it via /lovely-web.")
 	if (type === "fetch" && !isFetchEnabled(config)) throw new Error("web_fetch is disabled. Enable it via /lovely-web.")
 
-	const direct = type === "search" ? config.webSearch?.provider : config.webFetch?.provider
-	const id = direct ?? DEFAULT_PROVIDER_ID
+	const id = type === "search" ? config.webSearchProvider : config.webFetchProvider
 	if (!providers[id]) throw new Error(`Unknown provider "${id}". Available: ${Object.keys(providers).join(", ")}.`)
 	return id
 }
@@ -66,7 +116,8 @@ export function getProvider(type: "search" | "fetch", config: WebToolsConfig): P
 }
 
 export function resolveApiKey(provider: Provider, config: WebToolsConfig): string {
-	const key = config.webApiKeys?.[provider.id]
+	const keyField = apiKeyFields[provider.id as keyof typeof apiKeyFields]
+	const key = keyField ? config[keyField] : undefined
 	if (key) return key
 	const envKey = process.env[provider.envApiKey]
 	if (envKey) return envKey
@@ -74,31 +125,12 @@ export function resolveApiKey(provider: Provider, config: WebToolsConfig): strin
 }
 
 export function loadConfig(cwd: string): WebToolsConfig {
-	const global = readConfigFile(join(homedir(), ".pi", "agent", CONFIG_FILE_NAME))
-	const project = readConfigFile(resolve(cwd, ".pi", CONFIG_FILE_NAME))
-	return {
-		...global,
-		...project,
-		webSearch: { provider: DEFAULT_PROVIDER_ID, ...global.webSearch, ...project.webSearch },
-		webFetch: { ...global.webFetch, ...project.webFetch },
-		webImage: { ...global.webImage, ...project.webImage },
-		webApiKeys: { ...global.webApiKeys, ...project.webApiKeys }
-	}
+	return loadScopedConfig(cwd).value
 }
 
-export function readConfigFile(path: string): WebToolsConfig {
-	if (!existsSync(path)) return {}
-	const raw = readFileSync(path, "utf-8")
-	try {
-		return JSON.parse(raw) as WebToolsConfig
-	} catch (error) {
-		throw new Error(`Could not parse Lovely Web config at ${path}: ${error instanceof Error ? error.message : String(error)}`)
-	}
-}
-
-export function writeConfigFile(path: string, config: WebToolsConfig): void {
-	mkdirSync(resolve(path, ".."), { recursive: true })
-	writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8")
+export function loadScopedConfig(cwd: string): typeof lovelyWebConfigSpec {
+	migrateOldConfig(cwd)
+	return lovelyWebConfigSpec.load(cwd)
 }
 
 export function applyToolConfig(pi: ExtensionAPI, config: WebToolsConfig): void {
@@ -112,19 +144,61 @@ export function applyToolConfig(pi: ExtensionAPI, config: WebToolsConfig): void 
 	pi.setActiveTools([...active])
 }
 
-export function providerLabel(id: string | undefined): string {
-	return id ? (providers[id]?.label ?? id) : "(not set)"
+type ConfigPatch = Partial<Record<keyof WebToolsConfig, unknown>> & Record<string, unknown>
+type OldConfig = {
+	webSearch?: { provider?: string | null }
+	webFetch?: { provider?: string | null }
+	webImage?: { enabled?: boolean; resize?: boolean; maxSize?: number }
+	webApiKeys?: Record<string, string>
 }
 
-export function providerIdFromLabel(label: string): string | undefined {
-	return providerNames.find(id => providers[id]?.label === label)
+function migrateOldConfig(cwd: string): void {
+	for (const scope of lovelyWebConfigSpec.scopes) {
+		const newPath = lovelyWebConfigSpec.path(scope, cwd)
+		const oldPath = join(dirname(newPath), OLD_CONFIG_FILE_NAME)
+		if (!existsSync(oldPath)) continue
+
+		const migrated = oldToNewConfig(readJsonObject(oldPath) as OldConfig)
+		const existing = existsSync(newPath) ? readJsonObject(newPath) : {}
+		writeJsonObject(newPath, { ...migrated, ...existing })
+		rmSync(oldPath, { force: true })
+	}
 }
 
-export function maskApiKey(key: string | undefined): string {
-	if (!key) return "(not set)"
-	const maskLength = Math.max(5, key.length - 8)
-	const visible = Math.max(0, key.length - maskLength)
-	const startLength = Math.min(4, Math.ceil(visible / 2))
-	const endLength = Math.min(4, visible - startLength)
-	return `${key.slice(0, startLength)}${"*".repeat(maskLength)}${endLength > 0 ? key.slice(-endLength) : ""}`
+function oldToNewConfig(old: OldConfig): ConfigPatch {
+	const config: ConfigPatch = {}
+	setProvider(config, "webSearchProvider", old.webSearch?.provider)
+	setProvider(config, "webFetchProvider", old.webFetch?.provider)
+	if (typeof old.webImage?.enabled === "boolean") config.webImageEnabled = old.webImage.enabled
+	if (typeof old.webImage?.resize === "boolean") config.webImageResize = old.webImage.resize
+	if (typeof old.webImage?.maxSize === "number") config.webImageMaxSize = old.webImage.maxSize
+	for (const [providerId, key] of Object.entries(old.webApiKeys ?? {})) {
+		const keyField = apiKeyFields[providerId as keyof typeof apiKeyFields]
+		if (keyField && typeof key === "string") config[keyField] = key
+	}
+	return config
+}
+
+function setProvider(config: ConfigPatch, key: "webSearchProvider" | "webFetchProvider", provider: string | null | undefined): void {
+	if (provider === undefined) return
+	if (provider === null) {
+		config[key] = DISABLED_VALUE
+		return
+	}
+	config[key] = provider
+}
+
+function readJsonObject(path: string): ConfigPatch {
+	try {
+		const value = JSON.parse(readFileSync(path, "utf-8"))
+		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("must be an object")
+		return value as ConfigPatch
+	} catch (error) {
+		throw new Error(`Invalid Lovely Web config at ${path}: ${error instanceof Error ? error.message : String(error)}`)
+	}
+}
+
+function writeJsonObject(path: string, config: ConfigPatch): void {
+	mkdirSync(dirname(path), { recursive: true })
+	writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8")
 }
