@@ -54,21 +54,21 @@ The settings are stored in `~/.pi/agent/xl0-pi-lovely-web.json` (global) or `.pi
 
 ```json
 {
-  "webSearch": { "provider": "firecrawl" },
-  "webFetch":  { "provider": "firecrawl" },
-  "webImage":  { "enabled": true },
-  "webApiKeys": {
-    "firecrawl": "fc-...",
-    "exa": "...",
-    "tavily": "...",
-    "brave": "..."
-  }
+  "webSearchProvider": "firecrawl",
+  "webFetchProvider": "firecrawl",
+  "webImageEnabled": true,
+  "firecrawlApiKey": "fc-...",
+  "exaApiKey": "...",
+  "tavilyApiKey": "...",
+  "braveApiKey": "..."
 }
 ```
 
 API keys can also be set via environment variables: `FIRECRAWL_API_KEY`, `EXA_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`.
 
-Search defaults to Firecrawl. Fetch has no default; configure `webFetch.provider` to enable `web_fetch` and `fetchResult:true` first-result fetches from `web_search`. Set `provider:null` on `webSearch` or `webFetch` to remove that tool from Pi's active tool list. Set `webImage.enabled:false` to disable `web_image`.
+Search defaults to Firecrawl. Fetch defaults to `disabled`; configure `webFetchProvider` to enable `web_fetch` and `fetchResult:true` first-result fetches from `web_search`. Set `webSearchProvider` or `webFetchProvider` to `disabled` to remove that tool from Pi's active tool list. Set `webImageEnabled:false` to disable `web_image`.
+
+Old `xl0-web-tools.json` configs are migrated to `xl0-pi-lovely-web.json` on load, then deleted.
 
 `web_search` and `web_fetch` parameters are provider-specific and update dynamically when you change providers. Changing providers changes the tool schema and potentially may confuse the model if you change the schema mid-session, but unlikely with modern LLMs.
 
