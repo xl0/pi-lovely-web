@@ -158,7 +158,13 @@ function migrateOldConfig(cwd: string): void {
 		const oldPath = join(dirname(newPath), OLD_CONFIG_FILE_NAME)
 		if (!existsSync(oldPath)) continue
 
-		const migrated = oldToNewConfig(readJsonObject(oldPath) as OldConfig)
+		let migrated: ConfigPatch
+		try {
+			migrated = oldToNewConfig(readJsonObject(oldPath) as OldConfig)
+		} catch {
+			rmSync(oldPath, { force: true })
+			continue
+		}
 		const existing = existsSync(newPath) ? readJsonObject(newPath) : {}
 		writeJsonObject(newPath, { ...migrated, ...existing })
 		rmSync(oldPath, { force: true })
