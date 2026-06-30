@@ -106,7 +106,9 @@ Fetch params:
 |  |  |
 | --- | --- |
 | [Pi Lovely Dev Tools](https://github.com/xl0/pi-lovely-dev-tools) | interactive debugging helpers `/tool` `/show-sysprompt` |
+| [Pi Lovely Codex](https://github.com/xl0/pi-lovely-codex) | GPT fast mode and Codex-style `apply_patch` |
 | [Pi Lovely IDE](https://github.com/xl0/pi-lovely-ide) | IDE integration |
+| [Pi Lovely Config](https://github.com/xl0/pi-lovely-config) | scoped config helpers for Pi extensions |
 
 ---
 
