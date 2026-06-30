@@ -9,13 +9,15 @@ import {
 	isImageEnabled,
 	isImageResizeEnabled,
 	loadConfig,
+	lovelyWebConfigSpec,
 	providers,
-	resolveApiKey
+	resolveApiKey,
+	type WebToolsConfig
 } from "./config.js"
 import { DEFAULT_TIMEOUT_MS } from "./constants.js"
 import { asErrorMessage, formatSearchOutput, stringify } from "./format.js"
 import { DEFAULT_MAX_IMAGE_BYTES, imageImpl, MAX_IMAGE_BYTES } from "./image.js"
-import type { FetchOptions, SearchOptions, WebToolsConfig } from "./providers/types.js"
+import type { FetchOptions, SearchOptions } from "./providers/types.js"
 import { renderTextResult } from "./render.js"
 import type { ToolResult } from "./types.js"
 
@@ -60,7 +62,7 @@ async function fetchSearchResultMarkdown(config: WebToolsConfig, url: string, si
 }
 
 function getSearchParameters(config: WebToolsConfig) {
-	const configured = config.webSearch?.provider
+	const configured = config.webSearchProvider
 	const providerId = configured && providers[configured] ? configured : DEFAULT_PROVIDER_ID
 	const params: Record<string, TSchema> = {
 		query: Type.String({ description: "The search query." }),
@@ -83,7 +85,7 @@ function getSearchParameters(config: WebToolsConfig) {
 }
 
 function getFetchParameters(config: WebToolsConfig) {
-	const configured = config.webFetch?.provider
+	const configured = config.webFetchProvider
 	const providerId = configured && providers[configured]?.fetch ? configured : "firecrawl"
 	const params: Record<string, TSchema> = {
 		url: Type.String({ description: "The URL to fetch.", format: "uri" }),
@@ -99,7 +101,7 @@ function getFetchParameters(config: WebToolsConfig) {
 	return Type.Object(params)
 }
 
-export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsConfig = {}) {
+export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsConfig = lovelyWebConfigSpec.defaults) {
 	pi.registerTool({
 		name: "web_search",
 		label: "Web Search",
@@ -178,7 +180,7 @@ export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsCo
 	})
 }
 
-export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsConfig = {}) {
+export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsConfig = lovelyWebConfigSpec.defaults) {
 	pi.registerTool({
 		name: "web_fetch",
 		label: "Web Fetch",
@@ -304,7 +306,7 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 	})
 }
 
-export function registerLovelyWebTools(pi: ExtensionAPI, config: WebToolsConfig = {}) {
+export function registerLovelyWebTools(pi: ExtensionAPI, config: WebToolsConfig = lovelyWebConfigSpec.defaults) {
 	registerLovelyWebSearchTool(pi, config)
-	registerLovelyWebStaticTools(pi)
+	registerLovelyWebStaticTools(pi, config)
 }

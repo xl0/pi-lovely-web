@@ -43,10 +43,3 @@ export interface Provider {
 		signal?: AbortSignal
 	): Promise<{ markdown: string; metadata?: unknown; raw: unknown }>
 }
-
-export interface WebToolsConfig {
-	webSearch?: { provider?: string | null }
-	webFetch?: { provider?: string | null }
-	webImage?: { enabled?: boolean; resize?: boolean; maxSize?: number }
-	webApiKeys?: Record<string, string>
-}

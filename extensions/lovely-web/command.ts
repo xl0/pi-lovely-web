@@ -1,47 +1,8 @@
-import { homedir } from "node:os"
-import { join, resolve } from "node:path"
-import { type ExtensionAPI, ExtensionInputComponent, getSelectListTheme, getSettingsListTheme } from "@earendil-works/pi-coding-agent"
-import { Container, SelectList, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui"
-import {
-	applyToolConfig,
-	CONFIG_FILE_NAME,
-	DEFAULT_PROVIDER_ID,
-	DISABLED_LABEL,
-	getImageMaxSize,
-	isFetchEnabled,
-	isImageEnabled,
-	isImageResizeEnabled,
-	isSearchEnabled,
-	loadConfig,
-	maskApiKey,
-	providerIdFromLabel,
-	providerLabel,
-	providerNames,
-	providers,
-	readConfigFile,
-	writeConfigFile
-} from "./config.js"
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent"
+import { ScopedConfigEditor } from "@xl0/pi-lovely-config"
+import { applyToolConfig, loadScopedConfig } from "./config.js"
 import { asErrorMessage } from "./format.js"
 import { registerLovelyWebSearchTool, registerLovelyWebStaticTools } from "./tools.js"
-
-function providerSubmenu(title: string, labels: string[], currentValue: string, done: (selectedValue?: string) => void) {
-	const container = new Container()
-	container.addChild(new Text(title, 1, 1))
-	const list = new SelectList(
-		labels.map(label => ({ value: label, label })),
-		Math.min(labels.length, 10),
-		getSelectListTheme()
-	)
-	list.setSelectedIndex(Math.max(0, labels.indexOf(currentValue)))
-	list.onSelect = item => done(item.value)
-	list.onCancel = () => done(undefined)
-	container.addChild(list)
-	return {
-		render: (width: number) => container.render(width),
-		invalidate: () => container.invalidate(),
-		handleInput: (data: string) => list.handleInput(data)
-	}
-}
 
 export function registerLovelyWebCommand(pi: ExtensionAPI) {
 	pi.registerCommand("lovely-web", {
@@ -52,139 +13,32 @@ export function registerLovelyWebCommand(pi: ExtensionAPI) {
 				return
 			}
 
-			const scope = await ctx.ui.select("Config scope:", ["Global (~/.pi/agent/)", "Project (.pi/)"])
-			if (scope === undefined) return
-
-			const configPath = scope.startsWith("Global")
-				? join(homedir(), ".pi", "agent", CONFIG_FILE_NAME)
-				: resolve(ctx.cwd, ".pi", CONFIG_FILE_NAME)
-
-			let config: ReturnType<typeof readConfigFile>
 			try {
-				config = readConfigFile(configPath)
+				const config = loadScopedConfig(ctx.cwd)
+				notifyConfigWarnings(ctx, config.warnings)
+
+				await ctx.ui.custom<void>(
+					(tui, theme, _keybindings, done) =>
+						new ScopedConfigEditor({
+							tui,
+							theme,
+							config,
+							onChange(config) {
+								registerLovelyWebSearchTool(pi, config.value)
+								registerLovelyWebStaticTools(pi, config.value)
+								applyToolConfig(pi, config.value)
+							},
+							done
+						})
+				)
 			} catch (error) {
 				ctx.ui.notify(asErrorMessage(error), "error")
-				return
 			}
-			const save = () => {
-				writeConfigFile(configPath, config)
-				const activeConfig = loadConfig(ctx.cwd)
-				registerLovelyWebSearchTool(pi, activeConfig)
-				registerLovelyWebStaticTools(pi, activeConfig)
-				applyToolConfig(pi, activeConfig)
-			}
-
-			await ctx.ui.custom((_tui, theme, _keybindings, done) => {
-				const searchLabels = [DISABLED_LABEL, ...providerNames.map(id => providers[id]?.label ?? id)]
-				const fetchLabels = [DISABLED_LABEL, ...providerNames.filter(id => providers[id]?.fetch).map(id => providers[id]?.label ?? id)]
-				const items: SettingItem[] = [
-					{
-						id: "search",
-						label: "web_search",
-						currentValue: isSearchEnabled(config) ? providerLabel(config.webSearch?.provider ?? DEFAULT_PROVIDER_ID) : DISABLED_LABEL,
-						description: "Search provider, or disabled to remove web_search from active tools.",
-						submenu: (currentValue, done) => providerSubmenu("Select search provider", searchLabels, currentValue, done)
-					},
-					{
-						id: "fetch",
-						label: "web_fetch",
-						currentValue: isFetchEnabled(config) ? providerLabel(config.webFetch?.provider ?? undefined) : DISABLED_LABEL,
-						description: "Fetch provider, or disabled to remove web_fetch from active tools.",
-						submenu: (currentValue, done) => providerSubmenu("Select fetch provider", fetchLabels, currentValue, done)
-					},
-					{
-						id: "image",
-						label: "web_image",
-						currentValue: isImageEnabled(config) ? "enabled" : "disabled",
-						description: "Enable or disable direct image URL fetching.",
-						values: ["enabled", "disabled"]
-					},
-					{
-						id: "image-resize",
-						label: "Resize images",
-						currentValue: isImageResizeEnabled(config) ? "on" : "off",
-						description: "Resize fetched images to fit within the max size limit.",
-						values: ["on", "off"]
-					},
-					{
-						id: "image-max-size",
-						label: "Max image size",
-						currentValue: String(getImageMaxSize(config)),
-						description: "Maximum longest side in pixels for resized images.",
-						submenu: (_currentValue: string, done: (selectedValue?: string) => void) =>
-							new ExtensionInputComponent(
-								"Max image size (px):",
-								"Enter size",
-								value => {
-									const n = Number(value)
-									if (!Number.isFinite(n) || n < 1) {
-										done(undefined)
-										return
-									}
-									config.webImage ??= {}
-									config.webImage.maxSize = n
-									save()
-									done(String(n))
-								},
-								() => done(undefined),
-								{ tui: _tui }
-							)
-					},
-					...providerNames.map(id => ({
-						id: `key:${id}`,
-						label: `${providers[id]?.label ?? id} API key`,
-						currentValue: maskApiKey(config.webApiKeys?.[id]),
-						description: `Set API key for ${providers[id]?.label ?? id}.`,
-						submenu: (_currentValue: string, done: (selectedValue?: string) => void) =>
-							new ExtensionInputComponent(
-								`API key for ${providers[id]?.label ?? id}${config.webApiKeys?.[id] ? ` (current: ${maskApiKey(config.webApiKeys[id])})` : ""}:`,
-								"Enter API key",
-								value => {
-									config.webApiKeys ??= {}
-									config.webApiKeys[id] = value
-									save()
-									done(maskApiKey(value))
-								},
-								() => done(undefined),
-								{ tui: _tui }
-							)
-					}))
-				]
-				const container = new Container()
-				container.addChild(new Text(theme.fg("accent", theme.bold("Lovely Web")), 1, 1))
-				const list = new SettingsList(
-					items,
-					Math.min(items.length, 12),
-					getSettingsListTheme(),
-					(id, newValue) => {
-						if (id === "search") {
-							if (newValue === DISABLED_LABEL) config.webSearch = { provider: null }
-							else {
-								const providerId = providerIdFromLabel(newValue)
-								if (providerId) config.webSearch = { provider: providerId }
-							}
-						} else if (id === "fetch") {
-							if (newValue === DISABLED_LABEL) config.webFetch = { provider: null }
-							else {
-								const providerId = providerIdFromLabel(newValue)
-								if (providerId) config.webFetch = { provider: providerId }
-							}
-						} else if (id === "image") {
-							config.webImage = { ...config.webImage, enabled: newValue === "enabled" }
-						} else if (id === "image-resize") {
-							config.webImage = { ...config.webImage, resize: newValue === "on" }
-						}
-						save()
-					},
-					() => done(undefined)
-				)
-				container.addChild(list)
-				return {
-					render: (width: number) => container.render(width),
-					invalidate: () => container.invalidate(),
-					handleInput: (data: string) => list.handleInput(data)
-				}
-			})
 		}
 	})
+}
+
+function notifyConfigWarnings(ctx: ExtensionCommandContext, warnings: ReturnType<typeof loadScopedConfig>["warnings"]): void {
+	if (warnings.length === 0) return
+	ctx.ui.notify(warnings.map(warning => `${warning.path}: ${warning.message}`).join("\n"), "warning")
 }
