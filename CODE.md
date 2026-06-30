@@ -36,7 +36,7 @@ Tools:
 ## Provider dispatch
 `extensions/lovely-web/config.ts` owns provider registry/config helpers and exports `CONFIG_FILE_NAME` (`xl0-pi-lovely-web.json`). Config is defined via `@xl0/pi-lovely-config`, loaded from `~/.pi/agent/` user scope and `.pi/` workspace scope, with workspace overriding user. Search and fetch providers are flat settings: `webSearchProvider` defaults to `firecrawl`, `webFetchProvider` defaults to `disabled`; `disabled` removes the tool from Pi's active tool list and gates execution. `webImageEnabled` defaults to true; setting it to false removes `web_image`. `webImageResize` defaults true and `webImageMaxSize` defaults 2000. Invalid JSON throws a path-specific error; invalid known values become warnings and are ignored while resolving.
 
-API key resolution: `<provider>ApiKey` in config (`firecrawlApiKey`, `exaApiKey`, `tavilyApiKey`, `braveApiKey`) → `process.env[PROVIDER_ENV_KEY]` → error. Old `xl0-web-tools.json` nested configs are migrated to the new flat `xl0-pi-lovely-web.json` file per scope, then deleted; existing new-file keys win if both files exist.
+API key resolution: `<provider>ApiKey` in config (`firecrawlApiKey`, `exaApiKey`, `tavilyApiKey`, `braveApiKey`) → `process.env[PROVIDER_ENV_KEY]` → error. Old `xl0-web-tools.json` nested configs are migrated to the new flat `xl0-pi-lovely-web.json` file per scope, then deleted; malformed old configs are deleted and skipped; existing new-file keys win if both files exist.
 
 `providers/http.ts` contains shared JSON request handling for fetch timeouts, abort propagation, non-2xx errors, and JSON parsing.
 
