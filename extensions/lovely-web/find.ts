@@ -3,10 +3,9 @@ export type FindMode = "exact" | "lower" | "fuzzy"
 export const FIND_HIGHLIGHT_START = "\uE000"
 export const FIND_HIGHLIGHT_END = "\uE001"
 
-const FIND_TEXT_MAX_SNIPPETS = 20
-const FIND_TEXT_MAX_BUDGET = 20
 const FIND_TEXT_CONTEXT_CHARS = 500
 const FIND_TEXT_SNIPPET_CHARS = FIND_TEXT_CONTEXT_CHARS * 2
+const FIND_TEXT_MAX_CHARS = FIND_TEXT_SNIPPET_CHARS * 20
 
 interface SnippetRange {
 	start: number
@@ -212,8 +211,14 @@ function splitChunks(text: string): Array<{ text: string; start: number }> {
 	return chunks
 }
 
-function snippetBudget(range: SnippetRange): number {
-	return (range.end - range.start) / FIND_TEXT_SNIPPET_CHARS
+function snippetChars(range: SnippetRange): number {
+	return range.end - range.start
+}
+
+function clipSnippet(snippet: FindSnippet, maxChars: number): FindSnippet | undefined {
+	const end = Math.min(snippet.end, snippet.start + maxChars)
+	const matches = snippet.matches.filter(match => match.index < end && match.index + match.length > snippet.start)
+	return matches.length > 0 ? { start: snippet.start, end, matches } : undefined
 }
 
 function countQueries(matches: TextMatch[]): Array<{ query: string; count: number }> {
@@ -279,13 +284,22 @@ export function formatFindTextMatches(
 	const queryResults = trimmedQueries.map(query => ({ query, matchCount: matches.filter(match => match.query === query).length }))
 	const snippets = mergeMatchesIntoSnippets(text, matches)
 	const selected: FindSnippet[] = []
-	let budgetUsed = 0
+	let charsUsed = 0
 	for (const snippet of snippets) {
-		const cost = snippetBudget(snippet)
-		if (selected.length >= FIND_TEXT_MAX_SNIPPETS) break
-		if (selected.length > 0 && budgetUsed + cost > FIND_TEXT_MAX_BUDGET) break
-		selected.push(snippet)
-		budgetUsed += cost
+		const remaining = FIND_TEXT_MAX_CHARS - charsUsed
+		if (remaining <= 0) break
+		const chars = snippetChars(snippet)
+		if (chars <= remaining) {
+			selected.push(snippet)
+			charsUsed += chars
+			continue
+		}
+		const clipped = clipSnippet(snippet, remaining)
+		if (clipped) {
+			selected.push(clipped)
+			charsUsed += snippetChars(clipped)
+		}
+		break
 	}
 	const shownMatches = selected.reduce((sum, snippet) => sum + snippet.matches.length, 0)
 	const noMatchQueries = queryResults.filter(result => result.matchCount === 0).map(result => `"${result.query}"`)
@@ -304,16 +318,15 @@ export function formatFindTextMatches(
 			mode,
 			contextChars: FIND_TEXT_CONTEXT_CHARS,
 			snippetChars: FIND_TEXT_SNIPPET_CHARS,
-			maxBudget: FIND_TEXT_MAX_BUDGET,
-			maxSnippets: FIND_TEXT_MAX_SNIPPETS,
-			budgetUsed,
+			maxChars: FIND_TEXT_MAX_CHARS,
+			charsUsed,
 			matchCount: matches.length,
 			returnedMatches: shownMatches,
 			queryResults,
 			snippets: selected.map(snippet => ({
 				start: snippet.start,
 				end: snippet.end,
-				budget: snippetBudget(snippet),
+				chars: snippetChars(snippet),
 				matches: countQueries(snippet.matches)
 			}))
 		}

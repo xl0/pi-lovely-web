@@ -174,7 +174,7 @@ export async function smartProcess(
 	)
 
 	if (response.stopReason === "error" || response.stopReason === "aborted") {
-		throw new Error(`Smart search failed: ${response.errorMessage || response.stopReason}`)
+		throw new Error(response.errorMessage || response.stopReason)
 	}
 
 	const answer = extractText(response) || "Not found in provided results."
