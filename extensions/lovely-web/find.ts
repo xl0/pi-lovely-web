@@ -27,6 +27,11 @@ interface TextToken extends SnippetRange {
 	normalized: string
 }
 
+interface OffsetMappedText {
+	text: string
+	offsets: SnippetRange[]
+}
+
 function compactSnippetPart(text: string): string {
 	return text.replace(/\s+/g, " ").trim()
 }
@@ -96,6 +101,20 @@ function normalizeFindText(text: string): string {
 		.normalize("NFD")
 		.replace(/\p{Diacritic}/gu, "")
 		.toLocaleLowerCase()
+}
+
+function lowerWithOffsetMap(text: string): OffsetMappedText {
+	let loweredText = ""
+	const offsets: SnippetRange[] = []
+	let index = 0
+	for (const char of text) {
+		const lowered = char.toLocaleLowerCase()
+		const end = index + char.length
+		loweredText += lowered
+		for (let i = 0; i < lowered.length; i++) offsets.push({ start: index, end })
+		index = end
+	}
+	return { text: loweredText, offsets }
 }
 
 function normalizeQuery(text: string): string {
@@ -235,12 +254,15 @@ function formatQueryCounts(matches: TextMatch[]): string {
 
 function collectLiteralMatches(text: string, query: string, mode: "exact" | "lower"): TextMatch[] {
 	const needle = query.trim()
-	const haystack = mode === "exact" ? text : text.toLocaleLowerCase()
+	const lowered = mode === "lower" ? lowerWithOffsetMap(text) : undefined
+	const haystack = lowered?.text ?? text
 	const searchNeedle = mode === "exact" ? needle : needle.toLocaleLowerCase()
 	const matches: TextMatch[] = []
 	let index = searchNeedle ? haystack.indexOf(searchNeedle) : -1
 	while (index !== -1) {
-		matches.push({ query: needle, index, length: needle.length })
+		const start = lowered?.offsets[index]?.start ?? index
+		const end = lowered?.offsets[index + searchNeedle.length - 1]?.end ?? index + needle.length
+		matches.push({ query: needle, index: start, length: end - start })
 		index = haystack.indexOf(searchNeedle, index + searchNeedle.length)
 	}
 	return matches
