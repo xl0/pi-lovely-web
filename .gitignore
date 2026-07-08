@@ -3,3 +3,5 @@ bun.lock
 .pi/
 test/.env
 test/sessions/
+test/smart-cache/
+test/smart-results/

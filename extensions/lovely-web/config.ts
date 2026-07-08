@@ -59,6 +59,24 @@ const lovelyWebConfigSchema = {
 		depth: 1,
 		visibleWhen: ({ get }) => get("webImageEnabled") === true && get("webImageResize") === true
 	}),
+	smartSearchEnabled: field.boolean(false, {
+		label: "Smart search",
+		description: "Enable smartQuery post-processing for web_fetch."
+	}),
+	smartSearchModel: field.string("", {
+		label: "Smart search model",
+		description: "Text model as provider/model. Empty uses the current Pi model with a warning.",
+		depth: 1,
+		visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+	}),
+	smartSearchMaxTokens: field.number(2000, {
+		label: "Smart search max tokens",
+		description: "Maximum output tokens for smartQuery post-processing.",
+		min: 1,
+		step: 100,
+		depth: 1,
+		visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+	}),
 	firecrawlApiKey: field.string("", { label: "Firecrawl API key" }),
 	exaApiKey: field.string("", { label: "Exa API key" }),
 	tavilyApiKey: field.string("", { label: "Tavily API key" }),

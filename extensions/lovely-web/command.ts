@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { ScopedConfigEditor } from "@xl0/pi-lovely-config"
 import { applyToolConfig, loadScopedConfig } from "./config.js"
 import { asErrorMessage } from "./format.js"
+import { resetSmartConfigState, validateSmartConfig } from "./smart.js"
 import { registerLovelyWebSearchTool, registerLovelyWebStaticTools } from "./tools.js"
 
 export function registerLovelyWebCommand(pi: ExtensionAPI) {
@@ -24,9 +25,11 @@ export function registerLovelyWebCommand(pi: ExtensionAPI) {
 							theme,
 							config,
 							onChange(config) {
-								registerLovelyWebSearchTool(pi, config.value)
-								registerLovelyWebStaticTools(pi, config.value)
-								applyToolConfig(pi, config.value)
+								resetSmartConfigState()
+								const value = validateSmartConfig(config.value, ctx) ? config.value : { ...config.value, smartSearchEnabled: false }
+								registerLovelyWebSearchTool(pi, value)
+								registerLovelyWebStaticTools(pi, value)
+								applyToolConfig(pi, value)
 							},
 							done
 						})

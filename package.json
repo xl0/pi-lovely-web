@@ -28,6 +28,7 @@
 		"check": "bun run typecheck && bun run biome:check",
 		"test": "bun run test/run.ts",
 		"test:image": "bun run test/image.ts",
+		"test:smart": "bun run test/smart-prompt.ts",
 		"test:update": "bun run test/update-references.ts",
 		"release": "bun publish --access public",
 		"lint": "biome lint .",
