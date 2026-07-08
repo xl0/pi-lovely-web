@@ -46,7 +46,7 @@
 		"typescript": "^6.0.3"
 	},
 	"dependencies": {
-		"@xl0/pi-lovely-config": "^0.1.0"
+		"@xl0/pi-lovely-config": "^0.1.1"
 	},
 
 	"peerDependencies": {

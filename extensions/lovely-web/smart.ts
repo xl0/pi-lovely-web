@@ -135,6 +135,10 @@ function extractText(message: AssistantMessage): string {
 		.trim()
 }
 
+function smartSystemPrompt(config: WebToolsConfig): string {
+	return config.smartSearchSystemPrompt.trim() ? config.smartSearchSystemPrompt : SMART_SYSTEM_PROMPT
+}
+
 export async function smartProcess(
 	config: WebToolsConfig,
 	ctx: ExtensionContext,
@@ -163,7 +167,7 @@ export async function smartProcess(
 	const response = await completeSimple(
 		model,
 		{
-			systemPrompt: SMART_SYSTEM_PROMPT,
+			systemPrompt: smartSystemPrompt(config),
 			messages: [{ role: "user", content: prompt, timestamp: Date.now() }]
 		},
 		options

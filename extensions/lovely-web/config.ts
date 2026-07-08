@@ -1,12 +1,13 @@
 import { existsSync, readFileSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { type ConfigFromSchema, defineScopedConfig, field } from "@xl0/pi-lovely-config"
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { type ConfigFromSchema, defineScopedConfig, field, type ScopedConfig } from "@xl0/pi-lovely-config"
 import { braveProvider } from "./providers/brave.js"
 import { exaProvider } from "./providers/exa.js"
 import { firecrawlProvider } from "./providers/firecrawl.js"
 import { tavilyProvider } from "./providers/tavily.js"
 import type { Provider } from "./providers/types.js"
+import { SMART_SYSTEM_PROMPT } from "./smart.js"
 
 export const DEFAULT_PROVIDER_ID = "firecrawl"
 export const CONFIG_FILE_NAME = "xl0-pi-lovely-web.json"
@@ -17,6 +18,7 @@ const searchProviderValues = ["firecrawl", "exa", "tavily", "brave"] as const
 const fetchProviderValues = ["firecrawl", "exa", "tavily"] as const
 const searchProviderSettingValues = [DISABLED_VALUE, ...searchProviderValues] as const
 const fetchProviderSettingValues = [DISABLED_VALUE, ...fetchProviderValues] as const
+type SmartModelConfigContext = Pick<ExtensionContext, "model" | "modelRegistry">
 
 export const providers: Record<string, Provider> = {
 	firecrawl: firecrawlProvider,
@@ -32,63 +34,102 @@ const apiKeyFields = {
 	brave: "braveApiKey"
 } as const
 
-const lovelyWebConfigSchema = {
-	webSearchProvider: field.enum(searchProviderSettingValues, DEFAULT_PROVIDER_ID, {
-		label: "web_search",
-		description: "Search provider, or disabled to remove web_search from active tools."
-	}),
-	webFetchProvider: field.enum(fetchProviderSettingValues, DISABLED_VALUE, {
-		label: "web_fetch",
-		description: "Fetch provider, or disabled to remove web_fetch from active tools."
-	}),
-	webImageEnabled: field.boolean(true, {
-		label: "web_image",
-		description: "Enable or disable direct image URL fetching."
-	}),
-	webImageResize: field.boolean(true, {
-		label: "Resize images",
-		description: "Resize fetched images to fit within the max size limit.",
-		depth: 1,
-		visibleWhen: ({ get }) => get("webImageEnabled") === true
-	}),
-	webImageMaxSize: field.number(2000, {
-		label: "Max image size",
-		description: "Maximum longest side in pixels for resized images.",
-		min: 1,
-		step: 100,
-		depth: 1,
-		visibleWhen: ({ get }) => get("webImageEnabled") === true && get("webImageResize") === true
-	}),
-	smartSearchEnabled: field.boolean(false, {
-		label: "Smart search",
-		description: "Enable smartQuery post-processing for web_fetch."
-	}),
-	smartSearchModel: field.string("", {
+function modelId(model: ExtensionContext["model"]): string | undefined {
+	return model ? `${model.provider}/${model.id}` : undefined
+}
+
+function smartSearchModelField(ctx?: SmartModelConfigContext) {
+	const availableModels = ctx?.modelRegistry.getAvailable().filter(model => model.input.includes("text")) ?? []
+	const [firstModelId, ...otherModelIds] = availableModels.map(model => `${model.provider}/${model.id}`)
+	if (firstModelId === undefined) {
+		return field.string("", {
+			label: "Smart search model",
+			description: "Text model as provider/model. No authenticated text models are currently available.",
+			depth: 1,
+			visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+		})
+	}
+
+	const modelValues = [firstModelId, ...otherModelIds] as [string, ...string[]]
+	const currentModelId = modelId(ctx?.model)
+	const defaultModel = currentModelId && modelValues.includes(currentModelId) ? currentModelId : modelValues[0]
+	const valueDescriptions = Object.fromEntries(availableModels.map(model => [`${model.provider}/${model.id}`, model.name || model.id]))
+	return field.enum(modelValues, defaultModel, {
 		label: "Smart search model",
-		description: "Text model as provider/model. Empty uses the current Pi model with a warning.",
+		description: "Pi text model for smartQuery post-processing.",
+		search: true,
+		valueDescriptions,
 		depth: 1,
 		visibleWhen: ({ get }) => get("smartSearchEnabled") === true
-	}),
-	smartSearchMaxTokens: field.number(2000, {
-		label: "Smart search max tokens",
-		description: "Maximum output tokens for smartQuery post-processing.",
-		min: 1,
-		step: 100,
-		depth: 1,
-		visibleWhen: ({ get }) => get("smartSearchEnabled") === true
-	}),
-	firecrawlApiKey: field.string("", { label: "Firecrawl API key" }),
-	exaApiKey: field.string("", { label: "Exa API key" }),
-	tavilyApiKey: field.string("", { label: "Tavily API key" }),
-	braveApiKey: field.string("", { label: "Brave API key" })
-} as const
+	})
+}
+
+function createLovelyWebConfigSchema(ctx?: SmartModelConfigContext) {
+	return {
+		webSearchProvider: field.enum(searchProviderSettingValues, DEFAULT_PROVIDER_ID, {
+			label: "web_search",
+			description: "Search provider, or disabled to remove web_search from active tools."
+		}),
+		webFetchProvider: field.enum(fetchProviderSettingValues, DISABLED_VALUE, {
+			label: "web_fetch",
+			description: "Fetch provider, or disabled to remove web_fetch from active tools."
+		}),
+		webImageEnabled: field.boolean(true, {
+			label: "web_image",
+			description: "Enable or disable direct image URL fetching."
+		}),
+		webImageResize: field.boolean(true, {
+			label: "Resize images",
+			description: "Resize fetched images to fit within the max size limit.",
+			depth: 1,
+			visibleWhen: ({ get }) => get("webImageEnabled") === true
+		}),
+		webImageMaxSize: field.number(2000, {
+			label: "Max image size",
+			description: "Maximum longest side in pixels for resized images.",
+			min: 1,
+			step: 100,
+			depth: 1,
+			visibleWhen: ({ get }) => get("webImageEnabled") === true && get("webImageResize") === true
+		}),
+		smartSearchEnabled: field.boolean(false, {
+			label: "Smart search",
+			description: "Enable smartQuery post-processing for web_fetch."
+		}),
+		smartSearchModel: smartSearchModelField(ctx),
+		smartSearchMaxTokens: field.number(2000, {
+			label: "Smart search max tokens",
+			description: "Maximum output tokens for smartQuery post-processing.",
+			min: 1,
+			step: 100,
+			depth: 1,
+			visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+		}),
+		smartSearchSystemPrompt: field.text(SMART_SYSTEM_PROMPT, {
+			label: "Smart search system prompt",
+			description: "System prompt for smartQuery post-processing. Unset to use the built-in default.",
+			depth: 1,
+			visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+		}),
+		firecrawlApiKey: field.string("", { label: "Firecrawl API key" }),
+		exaApiKey: field.string("", { label: "Exa API key" }),
+		tavilyApiKey: field.string("", { label: "Tavily API key" }),
+		braveApiKey: field.string("", { label: "Brave API key" })
+	} as const
+}
+
+const lovelyWebConfigSchema = createLovelyWebConfigSchema()
 
 export type WebToolsConfig = ConfigFromSchema<typeof lovelyWebConfigSchema>
 
-export const lovelyWebConfigSpec = defineScopedConfig({
-	fileName: CONFIG_FILE_NAME,
-	schema: lovelyWebConfigSchema
-})
+export const lovelyWebConfigSpec = createLovelyWebConfigSpec()
+
+export function createLovelyWebConfigSpec(ctx?: SmartModelConfigContext): ScopedConfig<WebToolsConfig> {
+	return defineScopedConfig({
+		fileName: CONFIG_FILE_NAME,
+		schema: createLovelyWebConfigSchema(ctx)
+	}) as ScopedConfig<WebToolsConfig>
+}
 
 export function isSearchEnabled(config: WebToolsConfig): boolean {
 	return config.webSearchProvider !== DISABLED_VALUE
@@ -142,12 +183,12 @@ export function resolveApiKey(provider: Provider, config: WebToolsConfig): strin
 	throw new Error(`No API key for ${provider.label}. Set it via /lovely-web or set the ${provider.envApiKey} environment variable.`)
 }
 
-export function loadConfig(cwd: string): WebToolsConfig {
-	return loadScopedConfig(cwd).value
+export function loadConfig(cwd: string, ctx?: SmartModelConfigContext): WebToolsConfig {
+	return loadScopedConfig(cwd, ctx).value
 }
 
-export function loadScopedConfig(cwd: string): typeof lovelyWebConfigSpec {
-	const config = lovelyWebConfigSpec.load(cwd)
+export function loadScopedConfig(cwd: string, ctx?: SmartModelConfigContext): ScopedConfig<WebToolsConfig> {
+	const config = createLovelyWebConfigSpec(ctx).load(cwd)
 	migrateOldConfig(config)
 	return config
 }
@@ -170,7 +211,7 @@ type OldConfig = {
 	webApiKeys?: Record<string, string>
 }
 
-function migrateOldConfig(config: typeof lovelyWebConfigSpec): void {
+function migrateOldConfig(config: ScopedConfig<WebToolsConfig>): void {
 	for (const scope of config.scopes) {
 		const newPath = config.path(scope)
 		const oldPath = join(dirname(newPath), OLD_CONFIG_FILE_NAME)
