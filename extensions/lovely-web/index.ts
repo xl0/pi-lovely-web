@@ -10,7 +10,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		try {
 			resetSmartRuntimeState()
-			const loaded = loadScopedConfig(ctx.cwd)
+			const loaded = loadScopedConfig(ctx.cwd, ctx)
 			if (loaded.warnings.length > 0) ctx.ui.notify(loaded.warnings.map(w => `${w.path}: ${w.message}`).join("\n"), "warning")
 			const config = validateSmartConfig(loaded.value, ctx) ? loaded.value : { ...loaded.value, smartSearchEnabled: false }
 			registerLovelyWebSearchTool(pi, config)

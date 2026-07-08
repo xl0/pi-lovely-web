@@ -58,8 +58,9 @@ The settings are stored in `~/.pi/agent/xl0-pi-lovely-web.json` (global) or `.pi
   "webFetchProvider": "firecrawl",
   "webImageEnabled": true,
   "smartSearchEnabled": false,
-  "smartSearchModel": "",
+  "smartSearchModel": "anthropic/claude-sonnet-4-5",
   "smartSearchMaxTokens": 2000,
+  "smartSearchSystemPrompt": "Process one web_fetch result for a coding agent.\nUse only facts explicitly stated in the provided page text.\n...",
   "firecrawlApiKey": "fc-...",
   "exaApiKey": "...",
   "tavilyApiKey": "...",
@@ -73,7 +74,7 @@ Search defaults to Firecrawl. Fetch defaults to `disabled`; configure `webFetchP
 
 `web_fetch` also supports `findText`, an array of strings to search over fetched markdown. It returns deduped plain-text snippets with 500 characters of context; overlapping contexts are merged, each snippet lists matching queries and counts, UI rendering highlights hits, and long merged snippets consume the 20-snippet budget proportionally by character length. `findMode` defaults to `fuzzy`; `exact` preserves case, `lower` is case-insensitive literal, and `fuzzy` splits text on blank lines, normalizes accents/case/punctuation, scores chunks by query-token coverage plus typo-tolerant token matches, and highlights matched source tokens in the UI.
 
-When `smartSearchEnabled` is true, `smartQuery` post-processes `web_fetch` output with a Pi text model. It supports grounded summaries, extraction, comparisons, troubleshooting, limits/config/API details, security/migration notes, and verbatim code/command/schema examples. The prompt adapts the output format to the query, uses only explicitly stated page facts, preserves exact concrete fields, quotes/source-contexts important claims when useful without repeating the single fetched URL in every evidence bullet, and says `Not found on page.` for absent requested info. `smartSearchModel` is optional; when empty, the extension warns once per session and uses the current Pi model. If the configured model is unavailable, smart search warns once and disables itself for the session. `findText` and `smartQuery` are independent: both read the raw fetched markdown and their outputs are concatenated.
+When `smartSearchEnabled` is true, `smartQuery` post-processes `web_fetch` output with a Pi text model. It supports grounded summaries, extraction, comparisons, troubleshooting, limits/config/API details, security/migration notes, and verbatim code/command/schema examples. The prompt adapts the output format to the query, uses only explicitly stated page facts, preserves exact concrete fields, quotes/source-contexts important claims when useful without repeating the single fetched URL in every evidence bullet, and says `Not found on page.` for absent requested info. `/lovely-web` populates `smartSearchModel` from authenticated Pi text models and defaults to the current model when unset; invalid stored values warn and fall back to the default. `smartSearchSystemPrompt` defaults to the built-in prompt and can be edited. `findText` and `smartQuery` are independent: both read the raw fetched markdown and their outputs are concatenated.
 
 Smart input is limited to half the selected model context estimate. If model context is unknown, the fallback limit is about 60k estimated tokens. If input is trimmed, the tool result includes a visible note with kept/original character counts.
 

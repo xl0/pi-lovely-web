@@ -194,7 +194,7 @@ export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsCo
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
-				const config = loadConfig(ctx.cwd)
+				const config = loadConfig(ctx.cwd, ctx)
 				const searchProvider = getProvider("search", config)
 				const input = params as unknown as SearchToolArgs
 				onUpdate?.({
@@ -302,7 +302,7 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
 				const input = params as unknown as FetchToolArgs
-				const config = loadConfig(ctx.cwd)
+				const config = loadConfig(ctx.cwd, ctx)
 				const fetchProvider = getProvider("fetch", config)
 				onUpdate?.({
 					content: [{ type: "text", text: `Fetching page with ${fetchProvider.label}: ${input.url}` }],
@@ -401,7 +401,7 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
-				const config = loadConfig(ctx.cwd)
+				const config = loadConfig(ctx.cwd, ctx)
 				if (!isImageEnabled(config)) throw new Error("web_image is disabled. Enable it via /lovely-web.")
 				onUpdate?.({
 					content: [{ type: "text", text: `Fetching image: ${params.url}` }],

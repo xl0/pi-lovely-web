@@ -15,7 +15,7 @@ export function registerLovelyWebCommand(pi: ExtensionAPI) {
 			}
 
 			try {
-				const config = loadScopedConfig(ctx.cwd)
+				const config = loadScopedConfig(ctx.cwd, ctx)
 				notifyConfigWarnings(ctx, config.warnings)
 
 				await ctx.ui.custom<void>(
