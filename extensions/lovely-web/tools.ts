@@ -1,5 +1,6 @@
+import { StringEnum } from "@earendil-works/pi-ai"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { Text } from "@earendil-works/pi-tui"
+import { type Component, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
 import { type TSchema, Type } from "typebox"
 import {
 	DEFAULT_PROVIDER_ID,
@@ -15,10 +16,12 @@ import {
 	type WebToolsConfig
 } from "./config.js"
 import { DEFAULT_TIMEOUT_MS } from "./constants.js"
+import { type FindMode, formatFindTextMatches } from "./find.js"
 import { asErrorMessage, formatSearchOutput, stringify } from "./format.js"
 import { DEFAULT_MAX_IMAGE_BYTES, imageImpl, MAX_IMAGE_BYTES } from "./image.js"
 import type { FetchOptions, SearchOptions } from "./providers/types.js"
 import { renderTextResult } from "./render.js"
+import { smartProcess } from "./smart.js"
 import type { ToolResult } from "./types.js"
 
 interface SearchToolArgs {
@@ -40,6 +43,27 @@ interface SearchToolArgs {
 interface FetchToolArgs extends FetchOptions {
 	url: string
 	includeMetadata?: boolean
+	smartQuery?: string
+	findText?: string[]
+	findMode?: FindMode
+}
+
+interface WebFetchRenderState {
+	smartCost?: string
+	smartCostInvalidated?: boolean
+}
+
+class WebFetchCallComponent implements Component {
+	constructor(
+		private readonly oneLine: string,
+		private readonly splitLines: string[]
+	) {}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		return visibleWidth(this.oneLine) <= width ? [this.oneLine] : this.splitLines.flatMap(line => wrapTextWithAnsi(line, width))
+	}
 }
 
 async function fetchSearchResultImage(config: WebToolsConfig, url: string, signal?: AbortSignal): Promise<ToolResult> {
@@ -87,18 +111,60 @@ function getSearchParameters(config: WebToolsConfig) {
 function getFetchParameters(config: WebToolsConfig) {
 	const configured = config.webFetchProvider
 	const providerId = configured && providers[configured]?.fetch ? configured : "firecrawl"
-	const params: Record<string, TSchema> = {
+	const params: Record<string, TSchema> & { smartQuery?: TSchema } = {
 		url: Type.String({ description: "The URL to fetch.", format: "uri" }),
 		timeout: Type.Optional(Type.Integer({ description: "Request timeout in milliseconds. Defaults to 30000.", minimum: 1 })),
 		includeMetadata: Type.Optional(
 			Type.Boolean({
 				description: "Append verbose page metadata to the markdown output. Defaults to false. Full metadata is always available in details."
 			})
+		),
+		findText: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Text strings to find in fetched markdown. Returns merged verification snippets."
+			})
+		),
+		findMode: Type.Optional(
+			StringEnum(["exact", "lower", "fuzzy"], {
+				description:
+					"Find mode. fuzzy matches normalized paragraph chunks (default); exact is case-sensitive literal; lower is case-insensitive literal."
+			})
+		)
+	}
+
+	if (config.smartSearchEnabled) {
+		params.smartQuery = Type.Optional(
+			Type.String({
+				description:
+					"Fast and intelligent model processes fetched markdown, produces grounded result. Questions, extraction, summarization, troubleshooting, or any other task you can do on a page. Give commanders intent (do what and why). Can be combined with findText; both run independently over the fetched text."
+			})
 		)
 	}
 
 	Object.assign(params, providers[providerId]?.fetchParameters)
 	return Type.Object(params)
+}
+
+function formatUsd(amount: number): string {
+	if (amount === 0) return "$0"
+	if (amount < 0.0001) return "<$0.0001"
+	if (amount < 0.01) return `$${amount.toFixed(4)}`
+	return `$${amount.toFixed(3)}`
+}
+
+function smartCostLabel(details: unknown): string | undefined {
+	if (!details || typeof details !== "object") return undefined
+	const smart = (details as { smart?: unknown }).smart
+	if (!smart || typeof smart !== "object") return undefined
+	const usage = (smart as { usage?: unknown }).usage
+	if (!usage || typeof usage !== "object") return undefined
+	const cost = (usage as { cost?: unknown }).cost
+	if (cost && typeof cost === "object") {
+		const total = (cost as { total?: unknown }).total
+		if (typeof total === "number") return `cost:${formatUsd(total)}`
+	}
+	const totalTokens = (usage as { totalTokens?: unknown }).totalTokens
+	return typeof totalTokens === "number" ? `smart:${totalTokens} tok` : undefined
 }
 
 export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsConfig = lovelyWebConfigSpec.defaults) {
@@ -163,9 +229,10 @@ export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsCo
 					}
 				}
 
+				const details = fetchedImage ? { search: searchResult.raw, image: fetchedImage.details } : searchResult.raw
 				const result: ToolResult = {
 					content: [{ type: "text", text: formatSearchOutput(searchResult.results) }, ...(fetchedImage?.content || [])],
-					details: fetchedImage ? { search: searchResult.raw, image: fetchedImage.details } : searchResult.raw
+					details
 				}
 				onUpdate?.(result)
 				return result
@@ -187,13 +254,18 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 		description: "Fetch a page as markdown. Metadata is verbose and opt-in.",
 		promptSnippet: "Use web_fetch to fetch a URL as markdown.",
 		promptGuidelines: [
-			"Use web_fetch when you need the full readable markdown content of a known URL.",
-			"Prefer web_fetch over bash/curl for web pages because web_fetch returns cleaned markdown suitable for agent context."
+			"Use web_fetch when you need the full readable markdown content of a known URL; prefer web_fetch over bash/curl for web pages because web_fetch returns cleaned markdown suitable for agent context.",
+			"Use web_fetch.findText for search inside the page. Snippets are returned.",
+			...(config.smartSearchEnabled
+				? [
+						"Use web_fetch.smartQuery for grounded page processing: summarization, extraction, comparison, troubleshooting, config/API details, or verbatim code/command examples. Any task that can be done on a page by a fast and intelligent LLM."
+					]
+				: [])
 		],
 		parameters: getFetchParameters(config),
 		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0)
 			const input = args as unknown as FetchToolArgs
+			const state = context.state as WebFetchRenderState
 			const bits: string[] = []
 			if (input.waitFor !== undefined) bits.push(`wait ${input.waitFor}ms`)
 			if (input.maxAgeHours !== undefined) bits.push(`max age ${input.maxAgeHours}h`)
@@ -201,10 +273,30 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 			if (input.timeout !== undefined) bits.push(`timeout ${input.timeout}ms`)
 			if (input.includeMetadata) bits.push("metadata")
 			const suffix = bits.length ? ` ${theme.fg("dim", `(${bits.join(", ")})`)}` : ""
-			text.setText(`${theme.fg("toolTitle", theme.bold("web_fetch "))}${theme.fg("muted", input.url)}${suffix}`)
-			return text
+			const smart = input.smartQuery ? ` ${theme.fg("dim", `smart:"${input.smartQuery}"`)}` : ""
+			const find = input.findText?.length
+				? ` ${theme.fg("dim", `find:${input.findMode ?? "fuzzy"}:[${input.findText.map(text => `"${text}"`).join(", ")}]`)}`
+				: ""
+			const cost = state.smartCost ? ` ${theme.fg("dim", state.smartCost)}` : ""
+			const title = `${theme.fg("toolTitle", theme.bold("web_fetch "))}${theme.fg("muted", input.url)}`
+			const oneLine = `${title}${smart}${find}${suffix}${cost}`
+			const splitLines = [`${title}${suffix}${cost}`]
+			if (input.smartQuery) splitLines.push(theme.fg("dim", `smart:"${input.smartQuery}"`))
+			if (input.findText?.length) {
+				splitLines.push(theme.fg("dim", `find:${input.findMode ?? "fuzzy"}:[${input.findText.map(text => `"${text}"`).join(", ")}]`))
+			}
+			return new WebFetchCallComponent(oneLine, splitLines)
 		},
-		renderResult(result, { expanded, isPartial }, theme) {
+		renderResult(result, { expanded, isPartial }, theme, context) {
+			const state = context.state as WebFetchRenderState
+			const cost = !isPartial ? smartCostLabel(result.details) : undefined
+			if (cost && state.smartCost !== cost) {
+				state.smartCost = cost
+				if (!state.smartCostInvalidated) {
+					state.smartCostInvalidated = true
+					queueMicrotask(() => context.invalidate())
+				}
+			}
 			return renderTextResult(result, expanded, theme, isPartial ? "Fetching..." : "No content")
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -231,9 +323,40 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 				if (signal?.aborted) throw new Error("Fetch cancelled")
 
 				const metadata = input.includeMetadata && result.metadata ? `\n\nMetadata:\n${stringify(result.metadata)}` : ""
+				const fetchedText = `${result.markdown}${metadata}`
+				const outputParts: string[] = []
+				const renderParts: string[] = []
+				const extraDetails: { smart?: unknown; findText?: unknown; renderText?: string } = {}
+				if (input.smartQuery?.trim()) {
+					onUpdate?.({ content: [{ type: "text", text: "Processing fetched page with smart search" }], details: undefined })
+					const smart = await smartProcess(
+						config,
+						ctx,
+						{ query: input.smartQuery.trim(), resultText: fetchedText, sourceUrl: input.url },
+						signal
+					)
+					if (smart) {
+						outputParts.push(smart.text)
+						renderParts.push(smart.text)
+						extraDetails.smart = smart.details
+					}
+				}
+				const findText = input.findText?.map(text => text.trim()).filter(Boolean) ?? []
+				if (findText.length > 0) {
+					const found = formatFindTextMatches(fetchedText, findText, input.findMode ?? "fuzzy")
+					if (found.text) {
+						outputParts.push(found.text)
+						renderParts.push(found.renderText)
+					}
+					extraDetails.findText = found.details
+				}
+				const hasExtraOutput = outputParts.length > 0
+				const outputText = hasExtraOutput ? outputParts.join("\n\n---\n\n") : fetchedText
+				const renderText = renderParts.join("\n\n---\n\n")
+				if (hasExtraOutput && renderText !== outputText) extraDetails.renderText = renderText
 				const toolResult: ToolResult = {
-					content: [{ type: "text", text: `${result.markdown}${metadata}` }],
-					details: result.raw
+					content: [{ type: "text", text: outputText }],
+					details: hasExtraOutput ? { fetch: result.raw, ...extraDetails } : result.raw
 				}
 				onUpdate?.(toolResult)
 				return toolResult

@@ -10,6 +10,7 @@
 - API key resolution: flat `<provider>ApiKey` setting → provider env var → explicit error.
 - `/lovely-web` applies tool active-state changes immediately with `setActiveTools()`.
 - `web_image` is URL-only and uses Pi image resizing; it does not require provider config/API keys.
+- `smartQuery` is a disabled-by-default post-processing mode on `web_fetch`, not a separate tool. It uses Pi model registry/auth, defaults to the current Pi model with warning when no model is configured, and disables itself for the session when configured model is unavailable. `web_fetch.findText` is deterministic snippet search over fetched markdown with default `fuzzy` mode plus `exact`/`lower` modes.
 
 ## Architecture
 - `extensions/lovely-web/index.ts` wires session config, tools, and command registration.
