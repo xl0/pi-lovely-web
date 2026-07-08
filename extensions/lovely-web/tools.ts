@@ -1,5 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai"
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { type Component, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
 import { type TSchema, Type } from "typebox"
 import {
@@ -22,7 +22,6 @@ import { DEFAULT_MAX_IMAGE_BYTES, imageImpl, MAX_IMAGE_BYTES } from "./image.js"
 import type { FetchOptions, SearchOptions } from "./providers/types.js"
 import { renderTextResult } from "./render.js"
 import { smartProcess } from "./smart.js"
-import type { ToolResult } from "./types.js"
 
 interface SearchToolArgs {
 	query: string
@@ -66,7 +65,7 @@ class WebFetchCallComponent implements Component {
 	}
 }
 
-async function fetchSearchResultImage(config: WebToolsConfig, url: string, signal?: AbortSignal): Promise<ToolResult> {
+async function fetchSearchResultImage(config: WebToolsConfig, url: string, signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
 	return imageImpl(
 		{
 			url,
@@ -208,7 +207,7 @@ export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsCo
 				if (signal?.aborted) throw new Error("Search cancelled")
 
 				const first = searchResult.results[0]
-				let fetchedImage: ToolResult | undefined
+				let fetchedImage: AgentToolResult<unknown> | undefined
 				if (fetchResult === true && first?.url) {
 					onUpdate?.({ content: [{ type: "text", text: `Fetching first result: ${first.url}` }], details: undefined })
 					try {
@@ -230,18 +229,14 @@ export function registerLovelyWebSearchTool(pi: ExtensionAPI, config: WebToolsCo
 				}
 
 				const details = fetchedImage ? { search: searchResult.raw, image: fetchedImage.details } : searchResult.raw
-				const result: ToolResult = {
+				const result: AgentToolResult<unknown> = {
 					content: [{ type: "text", text: formatSearchOutput(searchResult.results) }, ...(fetchedImage?.content || [])],
 					details
 				}
 				onUpdate?.(result)
 				return result
 			} catch (error) {
-				return {
-					content: [{ type: "text", text: `Web search failed: ${asErrorMessage(error)}` }],
-					details: { error: asErrorMessage(error) },
-					isError: true
-				}
+				throw new Error(`Web search failed: ${asErrorMessage(error)}`)
 			}
 		}
 	})
@@ -300,16 +295,18 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 			return renderTextResult(result, expanded, theme, isPartial ? "Fetching..." : "No content")
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const input = params as unknown as FetchToolArgs
+			let config: WebToolsConfig
+			let result: { markdown: string; metadata?: unknown; raw: unknown }
 			try {
-				const input = params as unknown as FetchToolArgs
-				const config = loadConfig(ctx.cwd, ctx)
+				config = loadConfig(ctx.cwd, ctx)
 				const fetchProvider = getProvider("fetch", config)
 				onUpdate?.({
 					content: [{ type: "text", text: `Fetching page with ${fetchProvider.label}: ${input.url}` }],
 					details: undefined
 				})
 
-				const result = await fetchProvider.fetch(
+				result = await fetchProvider.fetch(
 					resolveApiKey(fetchProvider, config),
 					input.url,
 					{
@@ -321,52 +318,56 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 					signal
 				)
 				if (signal?.aborted) throw new Error("Fetch cancelled")
+			} catch (error) {
+				throw new Error(`Web fetch failed: ${asErrorMessage(error)}`)
+			}
 
-				const metadata = input.includeMetadata && result.metadata ? `\n\nMetadata:\n${stringify(result.metadata)}` : ""
-				const fetchedText = `${result.markdown}${metadata}`
-				const outputParts: string[] = []
-				const renderParts: string[] = []
-				const extraDetails: { smart?: unknown; findText?: unknown; renderText?: string } = {}
-				if (input.smartQuery?.trim()) {
-					onUpdate?.({ content: [{ type: "text", text: "Processing fetched page with smart search" }], details: undefined })
+			const metadata = input.includeMetadata && result.metadata ? `\n\nMetadata:\n${stringify(result.metadata)}` : ""
+			const fetchedText = `${result.markdown}${metadata}`
+			const outputParts: string[] = []
+			const renderParts: string[] = []
+			const extraDetails: { smart?: unknown; findText?: unknown; renderText?: string } = {}
+			const findText = input.findText?.map(text => text.trim()).filter(Boolean) ?? []
+			if (input.smartQuery?.trim()) {
+				onUpdate?.({ content: [{ type: "text", text: "Processing fetched page with smart search" }], details: undefined })
+				let smartText: string
+				try {
 					const smart = await smartProcess(
 						config,
 						ctx,
 						{ query: input.smartQuery.trim(), resultText: fetchedText, sourceUrl: input.url },
 						signal
 					)
-					if (smart) {
-						outputParts.push(smart.text)
-						renderParts.push(smart.text)
-						extraDetails.smart = smart.details
-					}
+					if (!smart) throw new Error("unavailable. Check /lovely-web smart search model and auth config.")
+					smartText = smart.text
+					extraDetails.smart = smart.details
+				} catch (error) {
+					if (signal?.aborted) throw error
+					smartText = `Smart search failed: ${asErrorMessage(error)}`
+					extraDetails.smart = { error: smartText }
+					if (findText.length === 0) throw new Error(smartText)
 				}
-				const findText = input.findText?.map(text => text.trim()).filter(Boolean) ?? []
-				if (findText.length > 0) {
-					const found = formatFindTextMatches(fetchedText, findText, input.findMode ?? "fuzzy")
-					if (found.text) {
-						outputParts.push(found.text)
-						renderParts.push(found.renderText)
-					}
-					extraDetails.findText = found.details
-				}
-				const hasExtraOutput = outputParts.length > 0
-				const outputText = hasExtraOutput ? outputParts.join("\n\n---\n\n") : fetchedText
-				const renderText = renderParts.join("\n\n---\n\n")
-				if (hasExtraOutput && renderText !== outputText) extraDetails.renderText = renderText
-				const toolResult: ToolResult = {
-					content: [{ type: "text", text: outputText }],
-					details: hasExtraOutput ? { fetch: result.raw, ...extraDetails } : result.raw
-				}
-				onUpdate?.(toolResult)
-				return toolResult
-			} catch (error) {
-				return {
-					content: [{ type: "text", text: `Web fetch failed: ${asErrorMessage(error)}` }],
-					details: { error: asErrorMessage(error) },
-					isError: true
-				}
+				outputParts.push(smartText)
+				renderParts.push(smartText)
 			}
+			if (findText.length > 0) {
+				const found = formatFindTextMatches(fetchedText, findText, input.findMode ?? "fuzzy")
+				if (found.text) {
+					outputParts.push(found.text)
+					renderParts.push(found.renderText)
+				}
+				extraDetails.findText = found.details
+			}
+			const hasExtraOutput = outputParts.length > 0
+			const outputText = hasExtraOutput ? outputParts.join("\n\n---\n\n") : fetchedText
+			const renderText = renderParts.join("\n\n---\n\n")
+			if (hasExtraOutput && renderText !== outputText) extraDetails.renderText = renderText
+			const toolResult: AgentToolResult<unknown> = {
+				content: [{ type: "text", text: outputText }],
+				details: hasExtraOutput ? { fetch: result.raw, ...extraDetails } : result.raw
+			}
+			onUpdate?.(toolResult)
+			return toolResult
 		}
 	})
 
@@ -419,11 +420,7 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 					onUpdate
 				)
 			} catch (error) {
-				return {
-					content: [{ type: "text", text: `Web image failed: ${asErrorMessage(error)}` }],
-					details: { error: asErrorMessage(error) },
-					isError: true
-				}
+				throw new Error(`Web image failed: ${asErrorMessage(error)}`)
 			}
 		}
 	})

@@ -1,7 +1,6 @@
-import { formatDimensionNote, type ResizedImage, resizeImage } from "@earendil-works/pi-coding-agent"
+import { type AgentToolResult, formatDimensionNote, type ResizedImage, resizeImage } from "@earendil-works/pi-coding-agent"
 import { getImageDimensions } from "@earendil-works/pi-tui"
 import { DEFAULT_TIMEOUT_MS } from "./constants.js"
-import type { ToolResult } from "./types.js"
 
 export const DEFAULT_MAX_IMAGE_BYTES = 5_000_000
 export const MAX_IMAGE_BYTES = 20_000_000
@@ -63,11 +62,11 @@ async function fetchImageContent(
 	}
 }
 
-function textOnlyResult(text: string, details: Record<string, unknown>): ToolResult {
+function textOnlyResult(text: string, details: Record<string, unknown>): AgentToolResult<unknown> {
 	return { content: [{ type: "text" as const, text }], details }
 }
 
-function imageResult(text: string, image: { data: string; mimeType: string }, details: Record<string, unknown>): ToolResult {
+function imageResult(text: string, image: { data: string; mimeType: string }, details: Record<string, unknown>): AgentToolResult<unknown> {
 	return {
 		content: [
 			{ type: "text" as const, text },
@@ -77,7 +76,7 @@ function imageResult(text: string, image: { data: string; mimeType: string }, de
 	}
 }
 
-function emitResult(result: ToolResult, onUpdate?: (result: ToolResult) => void): ToolResult {
+function emitResult(result: AgentToolResult<unknown>, onUpdate?: (result: AgentToolResult<unknown>) => void): AgentToolResult<unknown> {
 	onUpdate?.(result)
 	return result
 }
@@ -91,8 +90,8 @@ export async function imageImpl(
 		maxSize?: number | undefined
 	},
 	signal?: AbortSignal,
-	onUpdate?: (result: ToolResult) => void
-): Promise<ToolResult> {
+	onUpdate?: (result: AgentToolResult<unknown>) => void
+): Promise<AgentToolResult<unknown>> {
 	const maxBytes = params.maxBytes ?? DEFAULT_MAX_IMAGE_BYTES
 	if (maxBytes > MAX_IMAGE_BYTES) throw new Error(`maxBytes cannot exceed ${MAX_IMAGE_BYTES}`)
 
