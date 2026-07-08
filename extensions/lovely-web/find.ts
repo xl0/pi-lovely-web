@@ -139,8 +139,8 @@ function cappedEditDistance(a: string, b: string, max: number): number {
 function fuzzyTokenMatches(token: string, chunkToken: string): boolean {
 	if (chunkToken === token) return true
 	if (/\d/.test(token)) return false
-	if (token.length < 4) return false
-	const maxDistance = token.length <= 5 ? 1 : 2
+	if (token.length < 6) return false
+	const maxDistance = token.length <= 8 ? 1 : 2
 	return Math.abs(token.length - chunkToken.length) <= maxDistance && cappedEditDistance(token, chunkToken, maxDistance) <= maxDistance
 }
 
