@@ -119,8 +119,7 @@ Fetch params:
 | [Pi Lovely Codex](https://github.com/xl0/pi-lovely-codex) | GPT fast mode and Codex-style `apply_patch` |
 | [Pi Lovely IDE](https://github.com/xl0/pi-lovely-ide) | IDE integration |
 | [Pi Lovely Config](https://github.com/xl0/pi-lovely-config) | scoped config helpers for Pi extensions |
-| [Pi Lovely Comment](https://github.com/xl0/agent-files/tree/master/pi/packages/pi-lovely-comment) | open the last assistant message in your editor and sync edits back into the prompt |
-| [Pi Lovely Rename](https://github.com/xl0/agent-files/tree/master/pi/packages/pi-lovely-rename) | automatic and manual session naming |
+
 ---
 
 Like this work? [Hire me](https://alexey.work/cv?ref=pi-lovely-web)
