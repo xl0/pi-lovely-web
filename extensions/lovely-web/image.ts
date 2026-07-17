@@ -1,3 +1,7 @@
+import { randomBytes } from "node:crypto"
+import { writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { type AgentToolResult, formatDimensionNote, type ResizedImage, resizeImage } from "@earendil-works/pi-coding-agent"
 import { getImageDimensions } from "@earendil-works/pi-tui"
 import { DEFAULT_TIMEOUT_MS } from "./constants.js"
@@ -5,6 +9,13 @@ import { DEFAULT_TIMEOUT_MS } from "./constants.js"
 export const DEFAULT_MAX_IMAGE_BYTES = 5_000_000
 export const MAX_IMAGE_BYTES = 20_000_000
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"])
+const IMAGE_EXTENSIONS: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" }
+
+async function saveOriginalImage(data: string, mimeType: string): Promise<string> {
+	const path = join(tmpdir(), `pi-web-image-${randomBytes(8).toString("hex")}.${IMAGE_EXTENSIONS[mimeType]}`)
+	await writeFile(path, Buffer.from(data, "base64"), { flag: "wx", mode: 0o600 })
+	return path
+}
 
 async function fetchImageContent(
 	url: string,
@@ -88,6 +99,7 @@ export async function imageImpl(
 		maxBytes?: number | undefined
 		resize?: boolean | undefined
 		maxSize?: number | undefined
+		saveOriginal?: boolean | undefined
 	},
 	signal?: AbortSignal,
 	onUpdate?: (result: AgentToolResult<unknown>) => void
@@ -97,13 +109,16 @@ export async function imageImpl(
 
 	const image = await fetchImageContent(params.url, { timeout: params.timeout ?? DEFAULT_TIMEOUT_MS, maxBytes }, signal)
 	if (signal?.aborted) throw new Error("Image fetch cancelled")
+	const originalPath = params.saveOriginal ? await saveOriginalImage(image.data, image.mimeType) : undefined
+	const savedNote = originalPath ? `\n[Original image: ${originalPath}]` : ""
 
 	const originalDimensions = getImageDimensions(image.data, image.mimeType) ?? undefined
 	const downloadDetails = {
 		url: params.url,
 		mimeType: image.mimeType,
 		bytes: image.bytes,
-		contentLength: image.contentLength
+		contentLength: image.contentLength,
+		...(originalPath ? { originalPath } : {})
 	}
 
 	if (params.resize === false) {
@@ -113,11 +128,11 @@ export async function imageImpl(
 			maxHeight: Infinity
 		})) as ResizedImage | null
 		if (!validated) {
-			const note = `Fetched image [${image.mimeType}]\n[Image omitted: could not be decoded]`
+			const note = `Fetched image [${image.mimeType}]${savedNote}\n[Image omitted: could not be decoded]`
 			return emitResult(textOnlyResult(note, downloadDetails), onUpdate)
 		}
 		const dimensions = { widthPx: validated.width, heightPx: validated.height }
-		const note = `Fetched image [${validated.mimeType}]`
+		const note = `Fetched image [${validated.mimeType}]${savedNote}`
 		return emitResult(
 			imageResult(note, validated, {
 				...downloadDetails,
@@ -136,12 +151,12 @@ export async function imageImpl(
 	})) as ResizedImage | null
 
 	if (!resized) {
-		const note = `Fetched image [${image.mimeType}]\n[Image omitted: could not be decoded or resized below the inline image size limit.]`
+		const note = `Fetched image [${image.mimeType}]${savedNote}\n[Image omitted: could not be decoded or resized below the inline image size limit.]`
 		return emitResult(textOnlyResult(note, { ...downloadDetails, dimensions: originalDimensions }), onUpdate)
 	}
 
 	const dimensionNote = formatDimensionNote(resized)
-	const note = `Fetched image [${resized.mimeType}]${dimensionNote ? `\n${dimensionNote}` : ""}`
+	const note = `Fetched image [${resized.mimeType}]${dimensionNote ? `\n${dimensionNote}` : ""}${savedNote}`
 	const dimensions = { widthPx: resized.width, heightPx: resized.height }
 	return emitResult(
 		imageResult(note, resized, {

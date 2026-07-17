@@ -38,7 +38,8 @@ The plain-text tool output looks like this:
    desc: Pi Coding Agent is a minimal, highly customizable terminal coding harness.
 ```
 
-- `web_fetch` - The single web page in markdown format. Set `findText` to an array of strings to return snippets from the fetched markdown. Optional `findMode` is `fuzzy` (default, normalized chunk match), `exact` (case-sensitive literal), or `lower` (case-insensitive literal). When smart search is enabled, set `smartQuery` to have a Pi text model answer/extract from the fetched markdown; `findText` and `smartQuery` can be combined.
+- `web_fetch` - An HTML page or PDF as provider-pre-processed markdown. Raw output defaults to 50 KB; complete content is saved privately under `/tmp`. Set `findText` to search the complete fetched markdown, or `smartQuery` to process it with a Pi text model.
+- `web_get` - Direct HTTP GET for text response bodies (HTML, JSON, XML, CSS/JS, or plain text), with the same raw/find/smart-query behavior. Non-text bodies are never placed in model context and are saved privately under `/tmp`. HTML script/style blocks are removed by default; set `stripScriptsAndStyles:false` for exact source.
 - `web_image` - The single image, returned as media content. Respects the Pi image resizing settings:
 
 ![web_image](https://raw.githubusercontent.com/xl0/pi-lovely-web/master/assets/web_image.png)
@@ -57,10 +58,12 @@ The settings are stored in `~/.pi/agent/xl0-pi-lovely-web.json` (global) or `.pi
   "webSearchProvider": "firecrawl",
   "webFetchProvider": "firecrawl",
   "webImageEnabled": true,
-  "smartSearchEnabled": false,
-  "smartSearchModel": "anthropic/claude-sonnet-4-5",
-  "smartSearchMaxTokens": 2000,
-  "smartSearchSystemPrompt": "Process one web_fetch result for a coding agent.\nUse only facts explicitly stated in the provided page text.\n...",
+  "rawOutputMaxBytes": 50000,
+  "smartQueryEnabled": false,
+  "smartQueryModel": "anthropic/claude-sonnet-4-5",
+  "smartQueryMaxTokens": 2000,
+  "smartQueryInputPercent": 75,
+  "smartQuerySystemPrompt": "Process one web_fetch result for a coding agent.\nUse only facts explicitly stated in the provided page text.\n...",
   "firecrawlApiKey": "fc-...",
   "exaApiKey": "...",
   "tavilyApiKey": "...",
@@ -72,13 +75,17 @@ API keys can also be set via environment variables: `FIRECRAWL_API_KEY`, `EXA_AP
 
 Search defaults to Firecrawl. Fetch defaults to `disabled`; configure `webFetchProvider` to enable `web_fetch` and `fetchResult:true` first-result fetches from `web_search`. Set `webSearchProvider` or `webFetchProvider` to `disabled` to remove that tool from Pi's active tool list. Set `webImageEnabled:false` to disable `web_image`.
 
-`web_fetch` also supports `findText`, an array of strings to search over fetched markdown. It returns deduped plain-text snippets with 500 characters of context; overlapping contexts are merged, each snippet lists matching queries and counts, UI rendering highlights hits, and returned snippets are capped to about 20k raw characters total. `findMode` defaults to `fuzzy`; `exact` preserves case, `lower` is case-insensitive literal, and `fuzzy` splits text on blank lines, normalizes accents/case/punctuation, scores chunks by query-token coverage plus typo-tolerant token matches, and highlights matched source tokens in the UI.
+Raw `web_fetch` and `web_get` output is limited by `rawOutputMaxBytes` (50,000 by default); set it to `0` for unlimited output. Truncation happens at a UTF-8 boundary and prefers a complete line, and reports shown/total bytes and lines. Complete fetched content is always saved: `web_fetch` saves provider-produced markdown; textual `web_get` responses are saved decoded and with the requested HTML script/style stripping applied. Non-text responses and original `web_image` downloads are saved unprocessed. Private files use mode `0600`; saved paths are included in tool output.
 
-When `smartSearchEnabled` is true, `smartQuery` post-processes `web_fetch` output with a Pi text model. It supports grounded summaries, extraction, comparisons, troubleshooting, limits/config/API details, security/migration notes, and verbatim code/command/schema examples. The prompt adapts the output format to the query, uses only explicitly stated page facts, preserves exact concrete fields, quotes/source-contexts important claims when useful without repeating the single fetched URL in every evidence bullet, and says `Not found on page.` for absent requested info. `/lovely-web` populates `smartSearchModel` from authenticated Pi text models and defaults to the current model when unset; invalid stored values warn and fall back to the default. `smartSearchSystemPrompt` defaults to the built-in prompt and can be edited. `findText` and `smartQuery` are independent: both read the raw fetched markdown and their outputs are concatenated.
+Both tools support `findText`, an array of strings searched over the complete fetched text up to hard download/provider limits—not the raw output prefix. It returns deduped plain-text snippets with 500 characters of context; overlapping contexts are merged, each snippet lists matching queries and counts, UI rendering highlights hits, and returned snippets are capped to about 20k raw characters total. `findMode` defaults to `fuzzy`; `exact` preserves case, `lower` is case-insensitive literal, and `fuzzy` splits text on blank lines, normalizes accents/case/punctuation, scores chunks by query-token coverage plus typo-tolerant token matches, and highlights matched source tokens in the UI. Complete fetched content is saved so the main agent can inspect it.
 
-Smart input is limited to half the selected model context estimate. If model context is unknown, the fallback limit is about 60k estimated tokens. If input is trimmed, the tool result includes a visible note with kept/original character counts.
+`web_get` makes a provider-free direct GET request with a minimal browser-compatible `pi-lovely-web` user agent and follows redirects. Downloads above 100 MB are rejected. Declared textual MIME types are decoded using their declared charset; otherwise UTF-8 is used, with browser-compatible Windows-1252 fallback for legacy HTML. Missing or non-text MIME types are never decoded into model context; their bytes are saved unprocessed and the tool returns status, MIME, size, and path. HTML `<script>` and `<style>` blocks are removed by default; set `stripScriptsAndStyles:false` for exact source. Saved textual responses contain the same decoded, stripped text used for raw/find/smart processing. HTTP non-2xx responses are returned as data: textual bodies remain available under raw/find/smart-query rules with a prominent status notice, while non-text bodies are path-only. Network, decoding, and hard-size failures remain tool errors.
 
-Old `xl0-web-tools.json` configs are migrated to `xl0-pi-lovely-web.json` on load, then deleted.
+When `smartQueryEnabled` is true, `smartQuery` post-processes `web_fetch` or `web_get` output with a Pi text model. It supports grounded summaries, extraction, comparisons, troubleshooting, limits/config/API details, security/migration notes, and verbatim code/command/schema examples. The prompt adapts output to the query, uses only explicitly stated page facts, preserves exact concrete fields, and says `Not found on page.` for absent requested info. `/lovely-web` populates `smartQueryModel` from authenticated Pi text models and defaults to the current model when unset. `smartQuerySystemPrompt` defaults to the built-in prompt and can be edited. `findText` and `smartQuery` are independent and both receive complete fetched text before their own output/input limits. Smart query remains a single non-agentic model call.
+
+Fetched smart-query content defaults to at most 75% of selected model context. The actual budget is further clamped to reserve configured output tokens, prompt overhead, and a 4K-token safety margin. Unknown model context uses an 80K-token fallback context. If input is trimmed, the result reports kept/original character counts. Complete fetched content is independently saved under `/tmp`.
+
+Old `xl0-web-tools.json` configs are migrated to `xl0-pi-lovely-web.json` on load, then deleted. Persisted `smartSearch*` settings are renamed to `smartQuery*` on load.
 
 `web_search` and `web_fetch` parameters are provider-specific and update dynamically when you change providers. Changing providers changes the tool schema and potentially may confuse the model if you change the schema mid-session, but unlikely with modern LLMs.
 
@@ -119,6 +126,8 @@ Fetch params:
 | [Pi Lovely Codex](https://github.com/xl0/pi-lovely-codex) | GPT fast mode and Codex-style `apply_patch` |
 | [Pi Lovely IDE](https://github.com/xl0/pi-lovely-ide) | IDE integration |
 | [Pi Lovely Config](https://github.com/xl0/pi-lovely-config) | scoped config helpers for Pi extensions |
+| [Pi Lovely Comment](https://github.com/xl0/agent-files/tree/master/pi/packages/pi-lovely-comment) | open the last assistant message in your editor and sync edits back into the prompt |
+| [Pi Lovely Rename](https://github.com/xl0/agent-files/tree/master/pi/packages/pi-lovely-rename) | automatic and manual session naming |
 
 ---
 

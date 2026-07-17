@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { completeSimple, getModel, type KnownProvider } from "@earendil-works/pi-ai"
-import { SMART_SYSTEM_PROMPT } from "../extensions/lovely-web/smart.js"
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat"
+import { SMART_QUERY_SYSTEM_PROMPT } from "../extensions/lovely-web/smart.js"
 
 interface PromptCase {
 	id: string
@@ -196,7 +196,7 @@ const separator = modelName.indexOf("/")
 if (separator <= 0) throw new Error(`Model must be provider/model, got ${modelName}`)
 const provider = modelName.slice(0, separator)
 const modelId = modelName.slice(separator + 1)
-const model = getModel(provider as KnownProvider, modelId as never)
+const model = getModel(provider as Parameters<typeof getModel>[0], modelId as never)
 const modelAuth = resolveModelAuth(provider)
 const firecrawlKey = resolveFirecrawlKey()
 const maxTokens = Number(argValue("max-tokens") ?? DEFAULT_MAX_TOKENS)
@@ -217,7 +217,7 @@ for (const testCase of pickedCases) {
 		const response = await completeSimple(
 			model,
 			{
-				systemPrompt: SMART_SYSTEM_PROMPT,
+				systemPrompt: SMART_QUERY_SYSTEM_PROMPT,
 				messages: [{ role: "user", content: prompt, timestamp: Date.now() }]
 			},
 			{ apiKey: modelAuth, maxTokens }
