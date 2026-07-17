@@ -1,10 +1,13 @@
-import { type Api, type AssistantMessage, completeSimple, type Model, type SimpleStreamOptions } from "@earendil-works/pi-ai"
+import type { Api, AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai"
+import { completeSimple } from "@earendil-works/pi-ai/compat"
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { WebToolsConfig } from "./config.js"
 
-const SMART_INPUT_FALLBACK_CHARS = 60_000 * 3
+const SMART_INPUT_FALLBACK_CONTEXT_TOKENS = 80_000
+const SMART_INPUT_CHARS_PER_TOKEN = 3
+const SMART_INPUT_SAFETY_TOKENS = 4096
 
-export const SMART_SYSTEM_PROMPT = `Process one web_fetch result for a coding agent.
+export const SMART_QUERY_SYSTEM_PROMPT = `Process one web_fetch result for a coding agent.
 Use only facts explicitly stated in the provided page text.
 Answer the smart query, not the whole page. Include neighboring/related sections only when needed for the requested task.
 
@@ -69,7 +72,7 @@ function disableSmart(ctx: ExtensionContext, reason: string): void {
 	disabledForSession = true
 	if (warnedUnavailableModel) return
 	warnedUnavailableModel = true
-	warn(ctx, `Lovely Web smart search disabled: ${reason}`)
+	warn(ctx, `Lovely Web smart query disabled: ${reason}`)
 }
 
 function resolveConfiguredModel(ctx: ExtensionContext, configured: string): Model<Api> | undefined {
@@ -105,26 +108,40 @@ function resolveCurrentModel(ctx: ExtensionContext): Model<Api> | undefined {
 	}
 	if (!warnedDefaultModel) {
 		warnedDefaultModel = true
-		warn(ctx, `Lovely Web smart search model not selected; using current model ${modelName(model)}.`)
+		warn(ctx, `Lovely Web smart query model not selected; using current model ${modelName(model)}.`)
 	}
 	return model
 }
 
 function resolveSmartModel(config: WebToolsConfig, ctx: ExtensionContext): Model<Api> | undefined {
-	if (!config.smartSearchEnabled || disabledForSession) return undefined
-	const configured = config.smartSearchModel.trim()
+	if (!config.smartQueryEnabled || disabledForSession) return undefined
+	const configured = config.smartQueryModel.trim()
 	return configured ? resolveConfiguredModel(ctx, configured) : resolveCurrentModel(ctx)
 }
 
 export function validateSmartConfig(config: WebToolsConfig, ctx: ExtensionContext): boolean {
-	if (!config.smartSearchEnabled) return true
+	if (!config.smartQueryEnabled) return true
 	return resolveSmartModel(config, ctx) !== undefined
 }
 
-function truncateForModel(text: string, model: Model<Api>): { text: string; originalChars: number; maxChars: number; truncated: boolean } {
-	const maxChars = model.contextWindow > 0 ? Math.max(4000, Math.floor((model.contextWindow / 2) * 3)) : SMART_INPUT_FALLBACK_CHARS
+export function smartQueryInputCharLimit(config: WebToolsConfig, model: Pick<Model<Api>, "contextWindow">, promptChars: number): number {
+	const contextTokens = model.contextWindow > 0 ? model.contextWindow : SMART_INPUT_FALLBACK_CONTEXT_TOKENS
+	const percentTokens = Math.floor((contextTokens * config.smartQueryInputPercent) / 100)
+	const promptTokens = Math.ceil(promptChars / SMART_INPUT_CHARS_PER_TOKEN)
+	const availableTokens = contextTokens - config.smartQueryMaxTokens - promptTokens - SMART_INPUT_SAFETY_TOKENS
+	return Math.max(1, Math.min(percentTokens, availableTokens) * SMART_INPUT_CHARS_PER_TOKEN)
+}
+
+function truncateForModel(
+	text: string,
+	model: Model<Api>,
+	config: WebToolsConfig,
+	promptChars: number
+): { text: string; originalChars: number; maxChars: number; truncated: boolean } {
+	const maxChars = smartQueryInputCharLimit(config, model, promptChars)
 	if (text.length <= maxChars) return { text, originalChars: text.length, maxChars, truncated: false }
-	return { text: text.slice(0, maxChars), originalChars: text.length, maxChars, truncated: true }
+	const end = maxChars > 0 && /[\uD800-\uDBFF]/.test(text[maxChars - 1] ?? "") ? maxChars - 1 : maxChars
+	return { text: text.slice(0, end), originalChars: text.length, maxChars, truncated: true }
 }
 
 function extractText(message: AssistantMessage): string {
@@ -136,7 +153,7 @@ function extractText(message: AssistantMessage): string {
 }
 
 function smartSystemPrompt(config: WebToolsConfig): string {
-	return config.smartSearchSystemPrompt.trim() ? config.smartSearchSystemPrompt : SMART_SYSTEM_PROMPT
+	return config.smartQuerySystemPrompt.trim() ? config.smartQuerySystemPrompt : SMART_QUERY_SYSTEM_PROMPT
 }
 
 export async function smartProcess(
@@ -154,10 +171,11 @@ export async function smartProcess(
 		return undefined
 	}
 
-	const maxTokens = Math.max(1, config.smartSearchMaxTokens)
-	const truncated = truncateForModel(input.resultText, model)
+	const maxTokens = Math.max(1, config.smartQueryMaxTokens)
 	const sourceUrlText = input.sourceUrl ? `\n\nSource URL:\n${input.sourceUrl}` : ""
-	const prompt = `Smart query:\n${input.query}${sourceUrlText}\n\nResult text:\n${truncated.text}`
+	const promptPrefix = `Smart query:\n${input.query}${sourceUrlText}\n\nResult text:\n`
+	const truncated = truncateForModel(input.resultText, model, config, smartSystemPrompt(config).length + promptPrefix.length)
+	const prompt = `${promptPrefix}${truncated.text}`
 	const options: SimpleStreamOptions = { maxTokens }
 	if (auth.apiKey !== undefined) options.apiKey = auth.apiKey
 	if (auth.headers !== undefined) options.headers = auth.headers
@@ -179,7 +197,7 @@ export async function smartProcess(
 
 	const answer = extractText(response) || "Not found in provided results."
 	const truncationNotice = truncated.truncated
-		? `\n\nNote: Smart input was truncated to ${truncated.text.length}/${truncated.originalChars} characters to stay within half of ${modelName(model)} context. Answer may omit trimmed content.`
+		? `\n\nNote: Smart query input was truncated to ${truncated.text.length}/${truncated.originalChars} characters to stay within ${config.smartQueryInputPercent}% of ${modelName(model)} context and reserve output space. Answer may omit trimmed content.`
 		: ""
 	return {
 		text: `${answer}${truncationNotice}`,

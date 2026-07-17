@@ -26,7 +26,7 @@ export function registerLovelyWebCommand(pi: ExtensionAPI) {
 							config,
 							onChange(config) {
 								resetSmartConfigState()
-								const value = validateSmartConfig(config.value, ctx) ? config.value : { ...config.value, smartSearchEnabled: false }
+								const value = validateSmartConfig(config.value, ctx) ? config.value : { ...config.value, smartQueryEnabled: false }
 								registerLovelyWebSearchTool(pi, value)
 								registerLovelyWebStaticTools(pi, value)
 								applyToolConfig(pi, value)

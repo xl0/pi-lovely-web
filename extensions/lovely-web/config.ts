@@ -1,13 +1,14 @@
-import { existsSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { type ConfigFromSchema, defineScopedConfig, field, type ScopedConfig } from "@xl0/pi-lovely-config"
+import { DEFAULT_RAW_OUTPUT_MAX_BYTES, MAX_RAW_OUTPUT_MAX_BYTES } from "./output.js"
 import { braveProvider } from "./providers/brave.js"
 import { exaProvider } from "./providers/exa.js"
 import { firecrawlProvider } from "./providers/firecrawl.js"
 import { tavilyProvider } from "./providers/tavily.js"
 import type { Provider } from "./providers/types.js"
-import { SMART_SYSTEM_PROMPT } from "./smart.js"
+import { SMART_QUERY_SYSTEM_PROMPT } from "./smart.js"
 
 export const DEFAULT_PROVIDER_ID = "firecrawl"
 export const CONFIG_FILE_NAME = "xl0-pi-lovely-web.json"
@@ -38,15 +39,15 @@ function modelId(model: ExtensionContext["model"]): string | undefined {
 	return model ? `${model.provider}/${model.id}` : undefined
 }
 
-function smartSearchModelField(ctx?: SmartModelConfigContext) {
+function smartQueryModelField(ctx?: SmartModelConfigContext) {
 	const availableModels = ctx?.modelRegistry.getAvailable().filter(model => model.input.includes("text")) ?? []
 	const [firstModelId, ...otherModelIds] = availableModels.map(model => `${model.provider}/${model.id}`)
 	if (firstModelId === undefined) {
 		return field.string("", {
-			label: "Smart search model",
+			label: "Smart query model",
 			description: "Text model as provider/model. No authenticated text models are currently available.",
 			depth: 1,
-			visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+			visibleWhen: ({ get }) => get("smartQueryEnabled") === true
 		})
 	}
 
@@ -55,12 +56,12 @@ function smartSearchModelField(ctx?: SmartModelConfigContext) {
 	const defaultModel = currentModelId && modelValues.includes(currentModelId) ? currentModelId : modelValues[0]
 	const valueDescriptions = Object.fromEntries(availableModels.map(model => [`${model.provider}/${model.id}`, model.name || model.id]))
 	return field.enum(modelValues, defaultModel, {
-		label: "Smart search model",
+		label: "Smart query model",
 		description: "Pi text model for smartQuery post-processing.",
 		search: true,
 		valueDescriptions,
 		depth: 1,
-		visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+		visibleWhen: ({ get }) => get("smartQueryEnabled") === true
 	})
 }
 
@@ -92,24 +93,40 @@ function createLovelyWebConfigSchema(ctx?: SmartModelConfigContext) {
 			depth: 1,
 			visibleWhen: ({ get }) => get("webImageEnabled") === true && get("webImageResize") === true
 		}),
-		smartSearchEnabled: field.boolean(false, {
-			label: "Smart search",
-			description: "Enable smartQuery post-processing for web_fetch."
+		rawOutputMaxBytes: field.number(DEFAULT_RAW_OUTPUT_MAX_BYTES, {
+			label: "Raw output truncation threshold (bytes)",
+			description: "Truncate raw web_fetch/web_get output above this byte count. Set 0 to disable truncation.",
+			min: 0,
+			max: MAX_RAW_OUTPUT_MAX_BYTES,
+			step: 10_000
 		}),
-		smartSearchModel: smartSearchModelField(ctx),
-		smartSearchMaxTokens: field.number(2000, {
-			label: "Smart search max tokens",
-			description: "Maximum output tokens for smartQuery post-processing.",
+		smartQueryEnabled: field.boolean(false, {
+			label: "Smart query",
+			description: "Enable smartQuery post-processing for web_fetch and web_get."
+		}),
+		smartQueryModel: smartQueryModelField(ctx),
+		smartQueryMaxTokens: field.number(2000, {
+			label: "Smart query max output tokens",
+			description: "Maximum model output tokens for smartQuery post-processing.",
 			min: 1,
 			step: 100,
 			depth: 1,
-			visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+			visibleWhen: ({ get }) => get("smartQueryEnabled") === true
 		}),
-		smartSearchSystemPrompt: field.text(SMART_SYSTEM_PROMPT, {
-			label: "Smart search system prompt",
+		smartQueryInputPercent: field.number(75, {
+			label: "Smart query input context (%)",
+			description: "Maximum percentage of model context used by fetched content; output and safety space are reserved separately.",
+			min: 1,
+			max: 95,
+			step: 5,
+			depth: 1,
+			visibleWhen: ({ get }) => get("smartQueryEnabled") === true
+		}),
+		smartQuerySystemPrompt: field.text(SMART_QUERY_SYSTEM_PROMPT, {
+			label: "Smart query system prompt",
 			description: "System prompt for smartQuery post-processing. Unset to use the built-in default.",
 			depth: 1,
-			visibleWhen: ({ get }) => get("smartSearchEnabled") === true
+			visibleWhen: ({ get }) => get("smartQueryEnabled") === true
 		}),
 		firecrawlApiKey: field.string("", { label: "Firecrawl API key" }),
 		exaApiKey: field.string("", { label: "Exa API key" }),
@@ -190,11 +207,13 @@ export function loadConfig(cwd: string, ctx?: SmartModelConfigContext): WebTools
 export function loadScopedConfig(cwd: string, ctx?: SmartModelConfigContext): ScopedConfig<WebToolsConfig> {
 	const config = createLovelyWebConfigSpec(ctx).load(cwd)
 	migrateOldConfig(config)
+	migrateSmartQueryConfig(config)
 	return config
 }
 
 export function applyToolConfig(pi: ExtensionAPI, config: WebToolsConfig): void {
 	const active = new Set(pi.getActiveTools())
+	active.add("web_get")
 	if (isSearchEnabled(config)) active.add("web_search")
 	else active.delete("web_search")
 	if (isFetchEnabled(config)) active.add("web_fetch")
@@ -209,6 +228,34 @@ type OldConfig = {
 	webFetch?: { provider?: string | null }
 	webImage?: { enabled?: boolean; resize?: boolean; maxSize?: number }
 	webApiKeys?: Record<string, string>
+}
+
+const smartQueryConfigKeys = {
+	smartSearchEnabled: "smartQueryEnabled",
+	smartSearchModel: "smartQueryModel",
+	smartSearchMaxTokens: "smartQueryMaxTokens",
+	smartSearchSystemPrompt: "smartQuerySystemPrompt"
+} as const
+
+function migrateSmartQueryConfig(config: ScopedConfig<WebToolsConfig>): void {
+	let changed = false
+	for (const scope of config.scopes) {
+		const patch = { ...config.scoped[scope] }
+		let scopeChanged = false
+		for (const [oldKey, newKey] of Object.entries(smartQueryConfigKeys)) {
+			if (patch[oldKey] === undefined) continue
+			if (patch[newKey] === undefined) patch[newKey] = patch[oldKey]
+			delete patch[oldKey]
+			scopeChanged = true
+		}
+		if (!scopeChanged) continue
+		writeFileSync(config.path(scope), `${JSON.stringify(patch, null, 2)}\n`, "utf8")
+		changed = true
+	}
+	if (changed) {
+		if (!config.cwd) throw new Error("Config must be loaded before migration")
+		config.load(config.cwd)
+	}
 }
 
 function migrateOldConfig(config: ScopedConfig<WebToolsConfig>): void {
