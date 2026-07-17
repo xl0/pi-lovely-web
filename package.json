@@ -1,6 +1,6 @@
 {
 	"name": "@xl0/pi-lovely-web",
-	"version": "0.2.2",
+	"version": "0.3.0",
 	"description": "Pi extension package for direct HTTP GET plus web_search, web_fetch, and web_image via Firecrawl, Exa, Tavily, and Brave.",
 	"keywords": [
 		"pi-package",
