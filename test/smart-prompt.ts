@@ -11,7 +11,7 @@ interface PromptCase {
 	warnIfIncludes?: string[]
 }
 
-const DEFAULT_MODEL = "openai-codex/gpt-5.4-mini"
+const DEFAULT_MODEL = "openai-codex/gpt-5.6-luna"
 const DEFAULT_MAX_TOKENS = 2400
 
 const cases: PromptCase[] = [
