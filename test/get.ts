@@ -2,11 +2,13 @@ import assert from "node:assert/strict"
 import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fauxAssistantMessage, type SimpleStreamOptions } from "@earendil-works/pi-ai"
+import { registerFauxProvider } from "@earendil-works/pi-ai/compat"
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { CONFIG_FILE_NAME, loadScopedConfig, lovelyWebConfigSpec } from "../extensions/lovely-web/config.js"
 import { MAX_DOWNLOAD_BYTES, webGetImpl } from "../extensions/lovely-web/get.js"
 import { limitTextOutput } from "../extensions/lovely-web/output.js"
-import { smartQueryInputCharLimit } from "../extensions/lovely-web/smart.js"
+import { smartProcess, smartQueryInputCharLimit } from "../extensions/lovely-web/smart.js"
 import { registerLovelyWebStaticTools } from "../extensions/lovely-web/tools.js"
 
 interface ExecutableTool {
@@ -62,6 +64,37 @@ const getTool = webGetTool
 const fetchTool = webFetchTool
 const testCwd = await mkdtemp(join(tmpdir(), "pi-lovely-web-test-"))
 await mkdir(join(testCwd, ".pi"))
+const faux = registerFauxProvider()
+const smartOptions: SimpleStreamOptions[] = []
+const smartRetryUpdates: string[] = []
+faux.setResponses([
+	(_context, options) => {
+		smartOptions.push(options ?? {})
+		return fauxAssistantMessage("", { stopReason: "error", errorMessage: "503 service unavailable" })
+	},
+	(_context, options) => {
+		smartOptions.push(options ?? {})
+		return fauxAssistantMessage("recovered")
+	}
+])
+const smartResult = await smartProcess(
+	{ ...lovelyWebConfigSpec.defaults, smartQueryEnabled: true },
+	{
+		cwd: testCwd,
+		model: faux.getModel(),
+		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test" }) },
+		isProjectTrusted: () => true,
+		ui: { notify() {} }
+	} as unknown as Parameters<typeof smartProcess>[1],
+	{ query: "summarize", resultText: "source" },
+	undefined,
+	message => smartRetryUpdates.push(message)
+)
+assert.equal(smartResult?.text, "recovered")
+assert.equal(smartResult?.details.retries, 1)
+assert.equal(smartOptions.length, 2)
+assert.deepEqual(smartRetryUpdates, ["Smart query retry 1/3 in 1s: 503 service unavailable"])
+faux.unregister()
 await writeFile(
 	join(testCwd, ".pi", CONFIG_FILE_NAME),
 	JSON.stringify({

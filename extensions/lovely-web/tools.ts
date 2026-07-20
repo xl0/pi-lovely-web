@@ -405,7 +405,8 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 								resultText: statusNotice ? `${statusNotice}\n\n${result.text}` : result.text,
 								sourceUrl: result.details.finalUrl
 							},
-							signal
+							signal,
+							message => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined })
 						)
 						if (!smart) throw new Error("unavailable. Check /lovely-web smart query model and auth config.")
 						outputParts.push(smart.text)
@@ -564,7 +565,8 @@ export function registerLovelyWebStaticTools(pi: ExtensionAPI, config: WebToolsC
 						config,
 						ctx,
 						{ query: input.smartQuery.trim(), resultText: fetchedText, sourceUrl: input.url },
-						signal
+						signal,
+						message => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined })
 					)
 					if (!smart) throw new Error("unavailable. Check /lovely-web smart query model and auth config.")
 					smartText = smart.text

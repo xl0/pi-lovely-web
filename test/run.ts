@@ -108,7 +108,7 @@ async function runCase(c: TestCase, provider: string): Promise<CaseResult> {
 		[
 			"-p",
 			"--model",
-			"accounts/fireworks/models/kimi-k2p6",
+			"openai-codex/gpt-5.6-luna",
 			"--system-prompt",
 			systemPrompt,
 			"--no-context-files",

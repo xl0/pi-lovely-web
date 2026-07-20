@@ -1,4 +1,12 @@
-import type { Api, AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai"
+import { setTimeout as sleep } from "node:timers/promises"
+import {
+	type Api,
+	type AssistantMessage,
+	contentText,
+	isRetryableAssistantError,
+	type Model,
+	type SimpleStreamOptions
+} from "@earendil-works/pi-ai"
 import { completeSimple } from "@earendil-works/pi-ai/compat"
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { WebToolsConfig } from "./config.js"
@@ -6,6 +14,8 @@ import type { WebToolsConfig } from "./config.js"
 const SMART_INPUT_FALLBACK_CONTEXT_TOKENS = 80_000
 const SMART_INPUT_CHARS_PER_TOKEN = 3
 const SMART_INPUT_SAFETY_TOKENS = 4096
+const SMART_QUERY_MAX_RETRIES = 3
+const SMART_QUERY_RETRY_DELAY_MS = 1000
 
 export const SMART_QUERY_SYSTEM_PROMPT = `Process one web_fetch result for a coding agent.
 Use only facts explicitly stated in the provided page text.
@@ -44,6 +54,7 @@ export interface SmartProcessResult {
 		originalInputChars: number
 		maxInputChars: number
 		truncated: boolean
+		retries: number
 		stopReason: AssistantMessage["stopReason"]
 		usage: AssistantMessage["usage"]
 	}
@@ -144,14 +155,6 @@ function truncateForModel(
 	return { text: text.slice(0, end), originalChars: text.length, maxChars, truncated: true }
 }
 
-function extractText(message: AssistantMessage): string {
-	return message.content
-		.filter((item): item is { type: "text"; text: string } => item.type === "text")
-		.map(item => item.text)
-		.join("\n")
-		.trim()
-}
-
 function smartSystemPrompt(config: WebToolsConfig): string {
 	return config.smartQuerySystemPrompt.trim() ? config.smartQuerySystemPrompt : SMART_QUERY_SYSTEM_PROMPT
 }
@@ -160,7 +163,8 @@ export async function smartProcess(
 	config: WebToolsConfig,
 	ctx: ExtensionContext,
 	input: SmartProcessInput,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	onRetry?: (message: string) => void
 ): Promise<SmartProcessResult | undefined> {
 	const model = resolveSmartModel(config, ctx)
 	if (!model) return undefined
@@ -176,26 +180,34 @@ export async function smartProcess(
 	const promptPrefix = `Smart query:\n${input.query}${sourceUrlText}\n\nResult text:\n`
 	const truncated = truncateForModel(input.resultText, model, config, smartSystemPrompt(config).length + promptPrefix.length)
 	const prompt = `${promptPrefix}${truncated.text}`
-	const options: SimpleStreamOptions = { maxTokens }
-	if (auth.apiKey !== undefined) options.apiKey = auth.apiKey
-	if (auth.headers !== undefined) options.headers = auth.headers
-	if (auth.env !== undefined) options.env = auth.env
-	if (signal !== undefined) options.signal = signal
+	const options: SimpleStreamOptions = { maxTokens, ...auth, ...(signal && { signal }) }
 
-	const response = await completeSimple(
-		model,
-		{
-			systemPrompt: smartSystemPrompt(config),
-			messages: [{ role: "user", content: prompt, timestamp: Date.now() }]
-		},
-		options
-	)
+	let retries = 0
+	let response: AssistantMessage
+	while (true) {
+		response = await completeSimple(
+			model,
+			{
+				systemPrompt: smartSystemPrompt(config),
+				messages: [{ role: "user", content: prompt, timestamp: Date.now() }]
+			},
+			options
+		)
+		if (retries >= SMART_QUERY_MAX_RETRIES || !isRetryableAssistantError(response)) {
+			break
+		}
+		retries++
+		onRetry?.(
+			`Smart query retry ${retries}/${SMART_QUERY_MAX_RETRIES} in ${SMART_QUERY_RETRY_DELAY_MS / 1000}s: ${response.errorMessage || "Transient model error"}`
+		)
+		await sleep(SMART_QUERY_RETRY_DELAY_MS, undefined, signal ? { signal } : undefined)
+	}
 
 	if (response.stopReason === "error" || response.stopReason === "aborted") {
 		throw new Error(response.errorMessage || response.stopReason)
 	}
 
-	const answer = extractText(response) || "Not found in provided results."
+	const answer = contentText(response.content).trim() || "Not found in provided results."
 	const truncationNotice = truncated.truncated
 		? `\n\nNote: Smart query input was truncated to ${truncated.text.length}/${truncated.originalChars} characters to stay within ${config.smartQueryInputPercent}% of ${modelName(model)} context and reserve output space. Answer may omit trimmed content.`
 		: ""
@@ -208,6 +220,7 @@ export async function smartProcess(
 			originalInputChars: truncated.originalChars,
 			maxInputChars: truncated.maxChars,
 			truncated: truncated.truncated,
+			retries,
 			stopReason: response.stopReason,
 			usage: response.usage
 		}
