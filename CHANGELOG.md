@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-04
+
 ### Fixed
 
 - Smart query streams through the owning registry provider's `streamSimple()` instead of the global compat `completeSimple()`, fixing `No API provider registered` for extension-registered models (e.g. pi-model-auto-router). The credential-derived `baseUrl` is applied to the request model.
