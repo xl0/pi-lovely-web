@@ -2,12 +2,12 @@ import { setTimeout as sleep } from "node:timers/promises"
 import {
 	type Api,
 	type AssistantMessage,
+	type Context,
 	contentText,
 	isRetryableAssistantError,
 	type Model,
 	type SimpleStreamOptions
 } from "@earendil-works/pi-ai"
-import { completeSimple } from "@earendil-works/pi-ai/compat"
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { WebToolsConfig } from "./config.js"
 
@@ -182,17 +182,22 @@ export async function smartProcess(
 	const prompt = `${promptPrefix}${truncated.text}`
 	const options: SimpleStreamOptions = { maxTokens, ...auth, ...(signal && { signal }) }
 
+	// Extension-registered providers live in the model registry only: their custom
+	// `api` values are absent from pi-ai's global compat table, so stream through
+	// the owning provider instead of the global `completeSimple`.
+	const provider = ctx.modelRegistry.getProvider(model.provider)
+	if (!provider) throw new Error(`Provider not registered: ${model.provider}`)
+	// Model-scoped baseUrl from the same auth resolution, mirroring ModelRuntime.prepareRequest.
+	const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model
+	const context: Context = {
+		systemPrompt: smartSystemPrompt(config),
+		messages: [{ role: "user", content: prompt, timestamp: Date.now() }]
+	}
+
 	let retries = 0
 	let response: AssistantMessage
 	while (true) {
-		response = await completeSimple(
-			model,
-			{
-				systemPrompt: smartSystemPrompt(config),
-				messages: [{ role: "user", content: prompt, timestamp: Date.now() }]
-			},
-			options
-		)
+		response = await provider.streamSimple(requestModel, context, options).result()
 		if (retries >= SMART_QUERY_MAX_RETRIES || !isRetryableAssistantError(response)) {
 			break
 		}
