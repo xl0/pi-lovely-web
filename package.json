@@ -27,6 +27,7 @@
 	"scripts": {
 		"typecheck": "tsgo --noEmit",
 		"check": "bun run typecheck && bun run biome:check",
+		"prepublishOnly": "bun run check",
 		"test": "bun run test/run.ts",
 		"test:get": "bun run test/get.ts",
 		"test:image": "bun run test/image.ts",
