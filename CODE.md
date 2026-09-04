@@ -6,7 +6,8 @@ Minimal Pi extension package providing multi-provider web access plus direct tex
 ## Package
 - Published package name: `@xl0/pi-lovely-web`; package description: "Pi extension package for direct HTTP GET plus web_search, web_fetch, and web_image via Firecrawl, Exa, Tavily, and Brave."
 - Pi entry: `extensions/` via `package.json#pi.extensions`.
-- Published files include `extensions/`, `README.md`, and `LICENSE`; package gallery image metadata points at GitHub-hosted screenshots under `assets/`.
+- Published files include `extensions/`, `README.md`, `CHANGELOG.md`, and `LICENSE`; package gallery image metadata points at GitHub-hosted screenshots under `assets/`.
+- Releases via `bun run release [patch|minor|major|x.y.z]`: `scripts/release.ts` verifies, rolls `CHANGELOG.md`, bumps the version, commits/tags/pushes; the tag push triggers `.github/workflows/publish.yml`, which stages on npm (2FA-approved) and creates the GitHub Release from the changelog section.
 - Runtime dependency: `@xl0/pi-lovely-config` `^0.1.1`. Pi AI/coding-agent/TUI dev/peer dependencies require `^0.84.0` / `>=0.84.0` (smart query needs the `baseUrl` in `getApiKeyAndHeaders`, present since pi 0.84).
 
 ## Test infrastructure

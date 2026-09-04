@@ -21,6 +21,7 @@
 	"files": [
 		"extensions/",
 		"README.md",
+		"CHANGELOG.md",
 		"LICENSE"
 	],
 	"scripts": {
@@ -31,7 +32,7 @@
 		"test:image": "bun run test/image.ts",
 		"test:smart": "bun run test/smart-prompt.ts",
 		"test:update": "bun run test/update-references.ts",
-		"release": "bun publish --access public",
+		"release": "bun run scripts/release.ts",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format .",

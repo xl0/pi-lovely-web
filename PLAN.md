@@ -13,6 +13,7 @@
 - Raw fetched output defaults to 50 KB with byte/line counts; complete source is always saved privately. `findText` searches complete fetched text up to hard provider/download limits.
 - `web_get` is provider-free direct HTTP GET with MIME/text checks, a 100 MB hard cap, decoded/stripped textual temp files, unprocessed non-text files, normal-result HTTP error bodies, and path-only non-text responses.
 - `smartQuery` is disabled-by-default, non-agentic post-processing on `web_fetch` and `web_get`. It defaults to 75% of selected model context while reserving prompt/output/safety space; complete source is saved when enabled. Transient failures retry up to three times at fixed one-second intervals. Config/UI terminology is “smart query”; old `smartSearch*` settings migrate.
+- Publishing is CI-driven: `bun run release` rolls the human-written `CHANGELOG.md [Unreleased]` section, bumps, tags, and pushes; the tag triggers npm staging plus a GitHub Release. Same flow as pi-lovely-codex.
 
 ## Architecture
 - `extensions/lovely-web/index.ts` wires session config, tools, and command registration.
